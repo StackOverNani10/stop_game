@@ -1,15 +1,19 @@
-import React from 'react'
-import { motion } from 'framer-motion'
+import * as React from 'react'
+import { motion, MotionProps } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+type ButtonBaseProps = {
   variant?: 'primary' | 'secondary' | 'danger' | 'success'
   size?: 'sm' | 'md' | 'lg'
   loading?: boolean
   children: React.ReactNode
 }
 
-export const Button: React.FC<ButtonProps> = ({
+type ButtonProps = Omit<React.ComponentPropsWithoutRef<'button'>, 'onAnimationStart'> & 
+  Omit<MotionProps, 'onAnimationStart'> & 
+  ButtonBaseProps
+
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(({
   variant = 'primary',
   size = 'md',
   loading = false,
@@ -17,7 +21,7 @@ export const Button: React.FC<ButtonProps> = ({
   children,
   className = '',
   ...props
-}) => {
+}, ref) => {
   const baseClasses = 'inline-flex items-center justify-center font-medium rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed'
   
   const variants = {
@@ -35,6 +39,7 @@ export const Button: React.FC<ButtonProps> = ({
 
   return (
     <motion.button
+      ref={ref}
       whileHover={{ scale: disabled || loading ? 1 : 1.02 }}
       whileTap={{ scale: disabled || loading ? 1 : 0.98 }}
       className={`${baseClasses} ${variants[variant]} ${sizes[size]} ${className}`}
@@ -47,4 +52,6 @@ export const Button: React.FC<ButtonProps> = ({
       {children}
     </motion.button>
   )
-}
+})
+
+Button.displayName = 'Button'

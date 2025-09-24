@@ -14,17 +14,23 @@ export interface GameState {
   updated_at: string
 }
 
+export interface PlayerProfile {
+  full_name: string | null
+  avatar_url: string | null
+  email: string
+}
+
 export interface GamePlayerState {
   id: string
   player_id: string
-  profile: {
-    full_name: string | null
-    avatar_url: string | null
-    email: string
-  }
+  profile: PlayerProfile
   score: number
   is_ready: boolean
   joined_at: string
+}
+
+export interface PlayerData extends Omit<GamePlayerState, 'profile'> {
+  profile: PlayerProfile
 }
 
 export interface PlayerAnswers {

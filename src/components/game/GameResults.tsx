@@ -5,9 +5,17 @@ import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { useGame } from '../../contexts/GameContext'
 import { useAuth } from '../../contexts/AuthContext'
+import { GamePlayerState } from '../../types/game'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import { RoundAnswer } from '../../types/database'
+
+interface Answer {
+  player_id: string;
+  category: string;
+  answer: string;
+  points: number;
+  is_unique: boolean;
+}
 
 interface PlayerResult {
   player_id: string
@@ -50,18 +58,26 @@ export const GameResults: React.FC = () => {
       const playerResults: { [playerId: string]: PlayerResult } = {}
 
       // Initialize player results
-      currentGame.players.forEach(player => {
-        playerResults[player.player_id] = {
-          player_id: player.player_id,
-          player_name: player.profile.full_name || 'Usuario',
+      const players = Array.isArray(currentGame.players) ? currentGame.players : [];
+
+      if (players.length === 0) {
+        console.error('No hay jugadores en la partida', currentGame.players);
+        return;
+      }
+
+      players.forEach((player: GamePlayerState) => {
+        const playerId = player.player_id;
+        playerResults[playerId] = {
+          player_id: playerId,
+          player_name: player.profile?.full_name || 'Usuario',
           answers: {},
-          total_points: player.score,
+          total_points: player.score || 0,
           round_points: 0
-        }
-      })
+        };
+      });
 
       // Process answers
-      answers?.forEach(answer => {
+      (answers as Answer[])?.forEach((answer: Answer) => {
         if (playerResults[answer.player_id]) {
           playerResults[answer.player_id].answers[answer.category] = {
             answer: answer.answer,
@@ -221,13 +237,12 @@ export const GameResults: React.FC = () => {
                         </p>
                         {answer && (
                           <div className="flex items-center gap-1 mt-1">
-                            <span className={`text-xs px-2 py-1 rounded-full ${
-                              answer.points > 0 
-                                ? answer.is_unique 
-                                  ? 'bg-green-100 text-green-700' 
-                                  : 'bg-blue-100 text-blue-700'
-                                : 'bg-red-100 text-red-700'
-                            }`}>
+                            <span className={`text-xs px-2 py-1 rounded-full ${answer.points > 0
+                              ? answer.is_unique
+                                ? 'bg-green-100 text-green-700'
+                                : 'bg-blue-100 text-blue-700'
+                              : 'bg-red-100 text-red-700'
+                              }`}>
                               {answer.points} pts
                               {answer.is_unique && ' ⭐'}
                             </span>
@@ -256,7 +271,7 @@ export const GameResults: React.FC = () => {
             Siguiente Ronda
           </Button>
         )}
-        
+
         <Button
           onClick={handleGoHome}
           variant="secondary"

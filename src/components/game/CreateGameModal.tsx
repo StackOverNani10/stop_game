@@ -53,18 +53,17 @@ export const CreateGameModal: React.FC<CreateGameModalProps> = ({
       {isOpen && (
         <Dialog
           as={motion.div}
-          static
-          open={isOpen}
-          onClose={onClose}
-          className="fixed inset-0 z-50 overflow-y-auto"
+          className="relative z-50"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
+          open={isOpen}
+          onClose={onClose}
         >
-          <div className="flex min-h-screen items-center justify-center p-4">
-            <Dialog.Overlay className="fixed inset-0 bg-black/50" />
-            
-            <motion.div
+          <div className="fixed inset-0 bg-black/50" aria-hidden="true" />
+          <div className="fixed inset-0 flex items-center justify-center p-4">
+            <Dialog.Panel
+              as={motion.div}
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -192,7 +191,7 @@ export const CreateGameModal: React.FC<CreateGameModalProps> = ({
                   </Button>
                 </div>
               </div>
-            </motion.div>
+            </Dialog.Panel>
           </div>
         </Dialog>
       )}

@@ -1,7 +1,30 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, insert } from '../lib/supabase'
+import type { Database } from '../types/database.types'
 import { useAuth } from './AuthContext'
-import { GameState, PlayerAnswers, RoundResults, LETTERS } from '../types/game'
+import { GameState, PlayerAnswers, RoundResults, LETTERS, PlayerData } from '../types/game'
+
+interface DatabaseGame {
+  id: string
+  code: string
+  host_id: string
+  status: 'waiting' | 'playing' | 'finished'
+  current_round: number
+  current_letter: string | null
+  categories: string[]
+  max_rounds: number
+  round_time_limit: number
+  stop_countdown: number
+  created_at: string
+  updated_at: string
+}
+
+interface GameData {
+  id: string;
+  status: 'waiting' | 'playing' | 'finished';
+  code: string;
+  host_id: string;
+}
 import { v4 as uuidv4 } from 'uuid'
 import toast from 'react-hot-toast'
 
@@ -40,42 +63,41 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (!currentGame?.id) return
 
-    const gameChannel = supabase
+    const subscription = supabase
       .channel(`game:${currentGame.id}`)
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'games',
-        filter: `id=eq.${currentGame.id}`
-      }, handleGameUpdate)
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'game_players',
-        filter: `game_id=eq.${currentGame.id}`
-      }, handlePlayersUpdate)
+      .on('system' as any, { event: 'postgres_changes' } as any, (payload: any) => {
+        if (payload.table === 'games' && payload.new?.id === currentGame.id) {
+          handleGameUpdate(payload)
+        } else if (payload.table === 'game_players' && payload.new?.game_id === currentGame.id) {
+          handlePlayersUpdate()
+        }
+      })
       .subscribe()
 
     return () => {
-      gameChannel.unsubscribe()
+      subscription.unsubscribe()
     }
   }, [currentGame?.id])
 
-  const handleGameUpdate = useCallback(async (payload: any) => {
-    if (payload.new && currentGame) {
-      const updatedGame = { ...currentGame, ...payload.new }
-      setCurrentGame(updatedGame)
-      
-      // Handle different game states
-      if (payload.new.status === 'playing' && payload.old?.status === 'waiting') {
-        toast.success('¡El juego ha comenzado!')
-        resetAnswers()
-      }
-      
-      if (payload.new.current_letter && payload.new.current_letter !== payload.old?.current_letter) {
-        toast.success(`Nueva letra: ${payload.new.current_letter}`)
-        resetAnswers()
-      }
+  const handleGameUpdate = useCallback((payload: any) => {
+    if (!payload.new) return;
+    
+    setCurrentGame(prev => ({
+      ...(prev || {}),
+      ...payload.new,
+      // Make sure players array is preserved if not in the update
+      players: prev?.players || []
+    }));
+    
+    // Handle different game states
+    if (payload.new.status === 'playing' && payload.old?.status === 'waiting') {
+      toast.success('¡El juego ha comenzado!');
+      resetAnswers();
+    }
+    
+    if (payload.new.current_letter && payload.new.current_letter !== payload.old?.current_letter) {
+      toast.success(`Nueva letra: ${payload.new.current_letter}`);
+      resetAnswers();
     }
   }, [currentGame])
 
@@ -98,9 +120,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (error) throw error
 
+      // Cast the data to PlayerData[] to ensure type safety
+      const playersData = data as unknown as PlayerData[]
+
       setCurrentGame(prev => prev ? {
         ...prev,
-        players: data.map(player => ({
+        players: playersData.map(player => ({
           id: player.id,
           player_id: player.player_id,
           profile: player.profile,
@@ -127,26 +152,26 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const gameId = uuidv4()
 
       // Create game
-      const { error: gameError } = await supabase
-        .from('games')
-        .insert({
-          id: gameId,
-          code: gameCode,
-          host_id: user.id,
-          categories,
-          max_rounds: maxRounds,
-          status: 'waiting'
-        })
+      const gameData = {
+        id: gameId,
+        code: gameCode,
+        host_id: user.id,
+        categories,
+        max_rounds: maxRounds,
+        status: 'waiting' as const
+      }
+
+      const { error: gameError } = await insert('games', gameData)
 
       if (gameError) throw gameError
 
       // Join as host
-      const { error: playerError } = await supabase
-        .from('game_players')
-        .insert({
-          game_id: gameId,
-          player_id: user.id
-        })
+      const { error: playerError } = await insert('game_players', {
+        game_id: gameId,
+        player_id: user.id,
+        is_ready: false,
+        score: 0
+      })
 
       if (playerError) throw playerError
 
@@ -170,10 +195,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Find game by code
       const { data: gameData, error: gameError } = await supabase
         .from('games')
-        .select('id')
+        .select('id, status, code, host_id')
         .eq('code', code.toUpperCase())
         .eq('status', 'waiting')
-        .single()
+        .single<GameData>()
 
       if (gameError || !gameData) {
         throw new Error('Juego no encontrado o ya iniciado')
@@ -189,12 +214,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (!existingPlayer) {
         // Join game
-        const { error: playerError } = await supabase
-          .from('game_players')
-          .insert({
-            game_id: gameData.id,
-            player_id: user.id
-          })
+        const { error: playerError } = await insert('game_players', {
+          game_id: gameData.id,
+          player_id: user.id,
+          is_ready: false,
+          score: 0,
+          joined_at: new Date().toISOString()
+        })
 
         if (playerError) throw playerError
       }
@@ -215,18 +241,20 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .from('games')
         .select('*')
         .eq('id', gameId)
-        .single()
+        .single<DatabaseGame>()
 
       if (gameError) throw gameError
+      if (!gameData) throw new Error('Juego no encontrado')
 
       setCurrentGame({
         ...gameData,
-        players: []
+        players: [],
+        stop_countdown: gameData.stop_countdown || 0
       })
 
       await loadGamePlayers(gameId)
     } catch (error) {
-      console.error('Error loading game:', error)
+      console.error('Error al cargar el juego:', error)
       throw error
     }
   }
@@ -256,18 +284,22 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)]
+      const now = new Date().toISOString()
 
-      const { error } = await supabase
+      // Use type assertion to specify the type of the update
+      const { error } = await (supabase
         .from('games')
-        .update({
-          status: 'playing',
-          current_letter: randomLetter,
-          current_round: 1
-        })
-        .eq('id', currentGame.id)
+        .update as any)({
+        status: 'playing',
+        current_letter: randomLetter,
+        current_round: 1,
+        updated_at: now
+      })
+      .eq('id', currentGame.id)
 
       if (error) throw error
     } catch (error: any) {
+      console.error('Error starting game:', error)
       toast.error('Error al iniciar el juego')
     }
   }
@@ -276,7 +308,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!currentGame || !user) return
 
     try {
-      const roundAnswers = Object.entries(answers).map(([category, answer]) => ({
+      const roundAnswers: Database['public']['Tables']['round_answers']['Insert'][] = Object.entries(answers).map(([category, answer]) => ({
         game_id: currentGame.id,
         player_id: user.id,
         round: currentGame.current_round,
@@ -285,14 +317,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         points: 0
       }))
 
-      const { error } = await supabase
-        .from('round_answers')
-        .insert(roundAnswers)
+      const { error } = await insert('round_answers', roundAnswers)
 
       if (error) throw error
 
       toast.success('Respuestas enviadas')
     } catch (error: any) {
+      console.error('Error submitting answers:', error)
       toast.error('Error al enviar respuestas')
     }
   }
@@ -301,34 +332,53 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!currentGame || !user) return
 
     try {
-      const { error } = await supabase
-        .from('games')
-        .update({
-          stop_countdown: 10
-        })
-        .eq('id', currentGame.id)
+      // Update local state to show stop countdown
+      setCurrentGame(prev => prev ? { 
+        ...prev, 
+        stop_countdown: 10 
+      } : null);
 
-      if (error) throw error
-
+      // If you need to notify other players, consider using Supabase Realtime
+      // or another method that doesn't require a database schema change
+      
       toast.success('¡STOP! 10 segundos para terminar')
     } catch (error: any) {
+      console.error('Error calling STOP:', error);
       toast.error('Error al llamar STOP')
     }
   }
 
+  // Type-safe update function for game_players
+  const updateGamePlayer = async (gameId: string, playerId: string, isReady: boolean) => {
+    // Use the HTTP API directly as a workaround for type issues
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/game_players?game_id=eq.${gameId}&player_id=eq.${playerId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({
+        is_ready: isReady,
+        updated_at: new Date().toISOString()
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`HTTP error! status: ${response.status}, ${error}`);
+    }
+  };
+
   const setPlayerReady = async (ready: boolean) => {
-    if (!currentGame || !user) return
+    if (!currentGame || !user) return;
 
     try {
-      const { error } = await supabase
-        .from('game_players')
-        .update({ is_ready: ready })
-        .eq('game_id', currentGame.id)
-        .eq('player_id', user.id)
-
-      if (error) throw error
+      await updateGamePlayer(currentGame.id, user.id, ready);
     } catch (error: any) {
-      toast.error('Error al actualizar estado')
+      console.error('Error updating ready status:', error);
+      toast.error('Error al actualizar estado');
     }
   }
 

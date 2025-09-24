@@ -1,9 +1,10 @@
 import React from 'react'
-import { motion } from 'framer-motion'
+import { motion, HTMLMotionProps } from 'framer-motion'
 
-interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+type InputProps = Omit<HTMLMotionProps<'input'>, 'onDrag' | 'onDragStart' | 'onDragEnd' | 'onAnimationStart' | 'onDragExit' | 'onDragTransitionEnd'> & {
   label?: string
   error?: string
+  as?: React.ElementType
 }
 
 export const Input: React.FC<InputProps> = ({

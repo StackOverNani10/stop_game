@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { User, Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
+import { Database } from '../types/database'
 import { Profile } from '../types/database'
 import toast from 'react-hot-toast'
 
@@ -13,7 +14,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<void>
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
-  updateProfile: (updates: Partial<Profile>) => Promise<void>
+  updateProfile: (updates: Partial<Database['public']['Tables']['profiles']['Update']>) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -38,11 +39,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data: { session } } = await supabase.auth.getSession()
       setSession(session)
       setUser(session?.user ?? null)
-      
+
       if (session?.user) {
         await loadProfile(session.user.id)
       }
-      
+
       setLoading(false)
     }
 
@@ -53,13 +54,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       async (event, session) => {
         setSession(session)
         setUser(session?.user ?? null)
-        
+
         if (session?.user) {
           await loadProfile(session.user.id)
         } else {
           setProfile(null)
         }
-        
+
         setLoading(false)
       }
     )
@@ -101,16 +102,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (error) throw error
 
       if (data.user) {
-        // Create profile
-        const { error: profileError } = await supabase
-          .from('profiles')
+        // Create profile with type assertion
+        const { error: profileError } = await (supabase
+          .from('profiles') as any)
           .insert({
             id: data.user.id,
             email: data.user.email!,
-            full_name: fullName
-          })
+            full_name: fullName,
+            avatar_url: null,
+            games_played: 0,
+            games_won: 0,
+            total_points: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
 
-        if (profileError) throw profileError
+        if (profileError) throw profileError;
       }
 
       toast.success('¡Cuenta creada exitosamente!')
@@ -161,11 +168,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const { error } = await supabase.auth.signOut()
       if (error) throw error
-      
+
       setUser(null)
       setProfile(null)
       setSession(null)
-      
+
       toast.success('Sesión cerrada')
     } catch (error: any) {
       toast.error('Error al cerrar sesión')
@@ -173,24 +180,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }
 
-  const updateProfile = async (updates: Partial<Profile>) => {
-    if (!user) return
-
+  const updateProfile = async (updates: Database['public']['Tables']['profiles']['Update']): Promise<void> => {
+    if (!user) {
+      toast.error('Usuario no autenticado');
+      return;
+    }
+  
     try {
-      const { error } = await supabase
+      // Hacemos la actualización usando una aserción de tipo más específica
+      const { error: updateError } = await (supabase as any)
         .from('profiles')
         .update(updates)
+        .eq('id', user.id);
+      
+      if (updateError) throw updateError;
+      
+      // Luego obtenemos el perfil actualizado
+      const { data, error: fetchError } = await supabase
+        .from('profiles')
+        .select('*')
         .eq('id', user.id)
-
-      if (error) throw error
-
-      setProfile(prev => prev ? { ...prev, ...updates } : null)
-      toast.success('Perfil actualizado')
-    } catch (error: any) {
-      toast.error('Error al actualizar perfil')
-      throw error
+        .single<Profile>();
+      
+      if (fetchError) throw fetchError;
+      
+      setProfile(data);
+      toast.success('Perfil actualizado correctamente');
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      toast.error(error instanceof Error ? error.message : 'Error al actualizar el perfil');
     }
-  }
+  };
 
   const value: AuthContextType = {
     user,
