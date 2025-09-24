@@ -1,5 +1,15 @@
 export interface Database {
   public: {
+    Functions: {
+      create_user_profile: {
+        Args: {
+          user_id: string;
+          user_email: string;
+          user_full_name: string;
+        };
+        Returns: unknown;
+      };
+    };
     Tables: {
       profiles: {
         Row: {
@@ -145,7 +155,10 @@ export interface Database {
   }
 }
 
-export type Profile = Database['public']['Tables']['profiles']['Row']
-export type Game = Database['public']['Tables']['games']['Row']
-export type GamePlayer = Database['public']['Tables']['game_players']['Row']
-export type RoundAnswer = Database['public']['Tables']['round_answers']['Row']
+// Helper types for database tables
+type Tables = Database['public']['Tables']
+
+export type Profile = Tables['profiles']['Row']
+export type Game = Tables['games']['Row']
+export type GamePlayer = Tables['game_players']['Row']
+export type RoundAnswer = Tables['round_answers']['Row']

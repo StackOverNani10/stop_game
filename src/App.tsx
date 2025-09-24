@@ -9,6 +9,7 @@ import { Dashboard } from './pages/Dashboard'
 import { Game } from './pages/Game'
 import { JoinGame } from './pages/JoinGame'
 import { Ranking } from './pages/Ranking'
+import VerifyEmail from './pages/VerifyEmail'
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth()
@@ -38,6 +39,10 @@ const AppRoutes: React.FC = () => {
         path="/auth" 
         element={user ? <Navigate to="/dashboard" replace /> : <Auth />} 
       />
+      <Route 
+        path="/verify-email" 
+        element={user ? <Navigate to="/dashboard" replace /> : <VerifyEmail />} 
+      />
       <Route
         path="/dashboard"
         element={
@@ -52,11 +57,9 @@ const AppRoutes: React.FC = () => {
         path="/game"
         element={
           <ProtectedRoute>
-            <GameProvider>
-              <Layout>
-                <Game />
-              </Layout>
-            </GameProvider>
+            <Layout>
+              <Game />
+            </Layout>
           </ProtectedRoute>
         }
       />
@@ -64,11 +67,9 @@ const AppRoutes: React.FC = () => {
         path="/join/:code?"
         element={
           <ProtectedRoute>
-            <GameProvider>
-              <Layout>
-                <JoinGame />
-              </Layout>
-            </GameProvider>
+            <Layout>
+              <JoinGame />
+            </Layout>
           </ProtectedRoute>
         }
       />
@@ -91,19 +92,19 @@ const AppRoutes: React.FC = () => {
 function App() {
   return (
     <AuthProvider>
-      <Router>
-        <div className="min-h-screen">
-          <AppRoutes />
-          <Toaster
-            position="top-right"
-            toastOptions={{
-              duration: 4000,
-              style: {
-                background: '#fff',
-                color: '#374151',
-                boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
-                border: '1px solid #e5e7eb',
-                borderRadius: '0.75rem',
+      <GameProvider>
+        <Router>
+          <div className="min-h-screen">
+            <Toaster
+              position="top-right"
+              toastOptions={{
+                duration: 4000,
+                style: {
+                  background: '#fff',
+                  color: '#374151',
+                  boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '0.75rem',
               },
               success: {
                 iconTheme: {
@@ -119,8 +120,10 @@ function App() {
               },
             }}
           />
-        </div>
-      </Router>
+            <AppRoutes />
+          </div>
+        </Router>
+      </GameProvider>
     </AuthProvider>
   )
 }

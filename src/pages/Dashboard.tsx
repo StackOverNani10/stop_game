@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Plus, Users, Trophy, Clock, Gamepad2, Star } from 'lucide-react'
 import { Button } from '../components/ui/Button'
@@ -10,10 +10,11 @@ import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 
 export const Dashboard: React.FC = () => {
-  const { profile } = useAuth()
+  const { profile, loading: authLoading } = useAuth()
   const { createGame, gameLoading } = useGame()
   const navigate = useNavigate()
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
 
   const handleCreateGame = async (categories: string[], maxRounds: number) => {
     try {
@@ -26,29 +27,53 @@ export const Dashboard: React.FC = () => {
     }
   }
 
+  // Efecto para manejar la carga del perfil
+  useEffect(() => {
+    if (!authLoading) {
+      // Pequeño retraso para asegurar que la animación de carga se vea
+      const timer = setTimeout(() => {
+        setIsLoading(false);
+      }, 500);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [authLoading, profile]);
+
   const stats = [
     {
       label: 'Partidas Jugadas',
-      value: profile?.games_played || 0,
+      value: profile?.games_played ?? 0,
       icon: Gamepad2,
       color: 'text-blue-600',
       bg: 'bg-blue-100'
     },
     {
       label: 'Victorias',
-      value: profile?.games_won || 0,
+      value: profile?.games_won ?? 0,
       icon: Trophy,
       color: 'text-yellow-600',
       bg: 'bg-yellow-100'
     },
     {
       label: 'Puntos Totales',
-      value: profile?.total_points || 0,
+      value: profile?.total_points ?? 0,
       icon: Star,
       color: 'text-purple-600',
       bg: 'bg-purple-100'
     }
   ]
+
+  // Mostrar carga mientras se verifica la autenticación y se carga el perfil
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="mt-4 text-lg text-gray-700">Cargando tu perfil...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

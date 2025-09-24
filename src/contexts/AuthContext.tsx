@@ -10,7 +10,7 @@ interface AuthContextType {
   profile: Profile | null
   session: Session | null
   loading: boolean
-  signUp: (email: string, password: string, fullName: string) => Promise<void>
+  signUp: (email: string, password: string, fullName: string) => Promise<{ user: User | null; session: Session | null }>
   signIn: (email: string, password: string) => Promise<void>
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
@@ -70,64 +70,76 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loadProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase
+      // Primero intentamos obtener el perfil
+      let { data: profile, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .single()
 
-      if (error && error.code !== 'PGRST116') {
-        throw error
+      // Si no existe el perfil, lo creamos
+      if (error && error.code === 'PGRST116') {
+        const userData = user || (await supabase.auth.getUser()).data.user;
+        const email = userData?.email || '';
+        const fullName = userData?.user_metadata?.full_name || 'Usuario';
+        const username = email.split('@')[0] || 'usuario';
+        
+        const { data: newProfile, error: createError } = await supabase
+          .from('profiles')
+          .insert({
+            id: userId,
+            email,
+            full_name: fullName,
+            username
+          } as any) // Usamos 'as any' temporalmente para evitar problemas de tipos
+          .select()
+          .single()
+
+        if (createError) throw createError;
+        
+        profile = newProfile;
+      } else if (error) {
+        throw error;
       }
 
-      setProfile(data)
+      setProfile(profile);
+      return profile;
     } catch (error) {
-      console.error('Error loading profile:', error)
+      console.error('Error loading profile:', error);
+      toast.error('Error al cargar el perfil del usuario');
+      return null;
     }
-  }
+  };
 
   const signUp = async (email: string, password: string, fullName: string) => {
-    setLoading(true)
+    setLoading(true);
     try {
+      // Primero, crear el usuario en Supabase Auth
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
           data: {
-            full_name: fullName
-          }
-        }
-      })
-
-      if (error) throw error
-
-      if (data.user) {
-        // Create profile with type assertion
-        const { error: profileError } = await (supabase
-          .from('profiles') as any)
-          .insert({
-            id: data.user.id,
-            email: data.user.email!,
             full_name: fullName,
-            avatar_url: null,
-            games_played: 0,
-            games_won: 0,
-            total_points: 0,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          });
+          },
+          emailRedirectTo: `${window.location.origin}/dashboard`
+        }
+      });
 
-        if (profileError) throw profileError;
-      }
+      if (error) throw error;
 
-      toast.success('¡Cuenta creada exitosamente!')
+      // Redirigir a la página de verificación de correo
+      window.location.href = '/verify-email';
+      
+      return data;
     } catch (error: any) {
-      toast.error(error.message)
-      throw error
+      const errorMessage = error.message || 'Error al crear la cuenta. Por favor intenta de nuevo.';
+      toast.error(errorMessage);
+      throw error;
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const signIn = async (email: string, password: string) => {
     setLoading(true)
@@ -228,5 +240,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
-  )
+  );
 }
+
+export default AuthProvider;
