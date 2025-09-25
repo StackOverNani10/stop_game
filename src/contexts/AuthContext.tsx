@@ -12,7 +12,7 @@ interface AuthContextType {
   loading: boolean
   signUp: (email: string, password: string, fullName: string) => Promise<{ user: User | null; session: Session | null }>
   signIn: (email: string, password: string) => Promise<void>
-  signInWithGoogle: () => Promise<void>
+  signInWithGoogle: () => Promise<{ provider: string; url: string } | void>
   signOut: () => Promise<void>
   updateProfile: (updates: Partial<Database['public']['Tables']['profiles']['Update']>) => Promise<void>
 }
@@ -32,6 +32,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<Profile | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const [initialized, setInitialized] = useState(false)
   
   const loadProfile = async (userId: string, forceRefresh = false): Promise<Profile | null> => {
     try {
@@ -165,6 +166,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         if (error) {
           console.error('Error getting session:', error);
+          setLoading(false);
+          setInitialized(true);
           return;
         }
         
@@ -181,6 +184,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } finally {
         if (isMounted) {
           setLoading(false);
+          setInitialized(true);
         }
       }
     }
@@ -190,6 +194,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        console.log('Auth state changed:', event);
+        
         if (!isMounted) {
           return;
         }
@@ -268,19 +274,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = async (): Promise<{ provider: string; url: string } | void> => {
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
+      setLoading(true);
+      
+      // Guardar la ruta actual para redirigir después del inicio de sesión
+      const currentPath = window.location.pathname;
+      if (currentPath !== '/auth') {
+        sessionStorage.setItem('preAuthPath', currentPath);
+      }
+      
+      console.log('Iniciando flujo de autenticación de Google...');
+      
+      // Configurar la URL de redirección para después del inicio de sesión
+      const redirectTo = `${window.location.origin}/dashboard`;
+      
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/dashboard`
-        }
-      })
-
-      if (error) throw error
-    } catch (error: any) {
-      toast.error('Error al iniciar sesión con Google')
-      throw error
+          redirectTo,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'select_account',
+          },
+          // Dejar que Supabase maneje la redirección
+          skipBrowserRedirect: false,
+        },
+      });
+      
+      if (error) {
+        console.error('Error en autenticación con Google:', error);
+        throw error;
+      }
+      
+      console.log('Respuesta OAuth:', data);
+      
+      // Si tenemos una URL, retornarla (aunque con skipBrowserRedirect: false, Supabase manejará la redirección)
+      if (data?.url) {
+        console.log('Flujo OAuth iniciado, redirigiendo al proveedor...');
+        return data;
+      }
+      
+      return undefined;
+      
+    } catch (error) {
+      console.error('Error en signInWithGoogle:', error);
+      toast.error('Error al iniciar sesión con Google');
+      throw error;
+    } finally {
+      // No desactivar el loading aquí para evitar parpadeos
+      // El estado de loading se manejará con el listener de autenticación
     }
   }
 
@@ -332,23 +375,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const value: AuthContextType = {
-    user,
-    profile,
-    session,
-    loading,
-    signUp,
-    signIn,
-    signInWithGoogle,
-    signOut,
-    updateProfile
+  // Show loading state while initializing
+  if (!initialized) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 animate-pulse">
+            <span className="text-white font-bold text-2xl">S</span>
+          </div>
+          <p className="text-gray-600">Inicializando aplicación...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider value={{
+      user,
+      profile,
+      session,
+      loading,
+      signUp,
+      signIn,
+      signInWithGoogle,
+      signOut,
+      updateProfile,
+    }}>
       {children}
     </AuthContext.Provider>
-  );
+  )
 }
-
-export default AuthProvider;
