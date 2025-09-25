@@ -28,10 +28,19 @@ interface GameData {
 import { v4 as uuidv4 } from 'uuid'
 import toast from 'react-hot-toast'
 
+interface GameCategory {
+  id: string;
+  game_id: string;
+  category_id: string;
+  created_at: string;
+}
+
 interface GameContextType {
   currentGame: GameState | null
   playerAnswers: PlayerAnswers
   gameLoading: boolean
+  availableCategories: DBCategory[]
+  categoriesLoading: boolean
   createGame: (categories: string[], maxRounds: number) => Promise<string>
   joinGame: (code: string) => Promise<void>
   leaveGame: () => Promise<void>
@@ -41,6 +50,7 @@ interface GameContextType {
   setPlayerReady: (ready: boolean) => Promise<void>
   updateAnswer: (category: string, answer: string) => void
   resetAnswers: () => void
+  loadCategories: () => Promise<void>
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined)
@@ -53,11 +63,49 @@ export const useGame = () => {
   return context
 }
 
+// Interfaz para la respuesta de la base de datos
+export interface DBCategory {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
 export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, profile } = useAuth()
   const [currentGame, setCurrentGame] = useState<GameState | null>(null)
   const [playerAnswers, setPlayerAnswers] = useState<PlayerAnswers>({})
   const [gameLoading, setGameLoading] = useState(false)
+  const [availableCategories, setAvailableCategories] = useState<DBCategory[]>([])
+  const [categoriesLoading, setCategoriesLoading] = useState(true)
+
+  // Cargar categorías disponibles
+  const loadCategories = useCallback(async () => {
+    try {
+      setCategoriesLoading(true)
+      const { data, error } = await supabase
+        .from('categories')
+        .select('*')
+        .order('name')
+      
+      if (error) throw error
+      
+      if (data) {
+        setAvailableCategories(data)
+      }
+    } catch (error) {
+      console.error('Error cargando categorías:', error)
+      toast.error('Error al cargar las categorías')
+    } finally {
+      setCategoriesLoading(false)
+    }
+  }, [])
+
+  // Cargar categorías cuando el usuario esté autenticado
+  useEffect(() => {
+    if (user) {
+      loadCategories()
+    }
+  }, [user, loadCategories])
 
   // Subscribe to game updates
   useEffect(() => {
@@ -144,41 +192,105 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   const createGame = async (categories: string[], maxRounds: number): Promise<string> => {
-    if (!user) throw new Error('User not authenticated')
+    // Verificar que el usuario esté autenticado
+    const currentUser = user;
+    if (!currentUser) throw new Error('User not authenticated');
     
-    setGameLoading(true)
+    setGameLoading(true);
     try {
-      const gameCode = generateGameCode()
-      const gameId = uuidv4()
+      const gameCode = generateGameCode();
+      const gameId = uuidv4();
+      const now = new Date().toISOString();
 
-      // Create game
-      const gameData = {
+      // 1. Primero, insertar el juego con solo los campos mínimos requeridos
+      const minimalGameData = {
         id: gameId,
         code: gameCode,
-        host_id: user.id,
-        categories,
+        host_id: currentUser.id,
+        status: 'waiting' as const,
+        created_at: now,
+        updated_at: now,
+        current_round: 1,
+        current_letter: null,
         max_rounds: maxRounds,
-        status: 'waiting' as const
+        round_time_limit: 120,
+        stop_countdown: 10
+      };
+
+      console.log('Creating game with data:', minimalGameData);
+      
+      // Insertar el juego con solo los campos mínimos
+      const { error } = await supabase
+        .from('games')
+        .insert([minimalGameData] as any);
+      
+      if (error) {
+        console.error('Error creating game:', error);
+        throw new Error(`No se pudo crear la partida: ${error.message}`);
+      }
+      
+      console.log('Game created successfully');
+      
+      // 2. Guardar las categorías en la tabla game_categories
+      const categoriesToInsert = categories.map(category => ({
+        game_id: gameId,
+        category_id: category,
+        created_at: now
+      }));
+
+      // Insertar cada categoría por separado para evitar problemas de tipos
+      for (const category of categoriesToInsert) {
+        const { error: categoryError } = await supabase
+          .from('game_categories')
+          .insert([category] as any);
+
+        if (categoryError) {
+          console.error('Error saving category:', category, categoryError);
+          // Continuar con las demás categorías
+        }
       }
 
-      const { error: gameError } = await insert('games', gameData)
-
-      if (gameError) throw gameError
-
-      // Join as host
+      // 3. Unir al jugador como anfitrión
       const { error: playerError } = await insert('game_players', {
         game_id: gameId,
-        player_id: user.id,
+        player_id: currentUser.id,
         is_ready: false,
-        score: 0
-      })
+        score: 0,
+        joined_at: now
+      });
 
-      if (playerError) throw playerError
+      if (playerError) {
+        console.error('Error joining game as host:', playerError);
+        throw new Error('No se pudo unir a la partida como anfitrión');
+      }
+      
+      // 4. Crear un objeto de juego local con todos los campos necesarios
+      const localGameState: GameState = {
+        ...minimalGameData,
+        categories: categories,
+        players: [
+          {
+            id: currentUser.id,
+            player_id: currentUser.id,
+            profile: {
+              full_name: currentUser.user_metadata?.full_name || null,
+              avatar_url: currentUser.user_metadata?.avatar_url || null,
+              email: currentUser.email || ''
+            },
+            score: 0,
+            is_ready: false,
+            joined_at: new Date().toISOString()
+          }
+        ]
+      };
+      
+      // 5. Actualizar el estado local
+      setCurrentGame(localGameState);
+      
+      // 6. Cargar el juego completo
+      await joinGameById(gameId);
 
-      // Load the game
-      await joinGameById(gameId)
-
-      return gameCode
+      return gameCode;
     } catch (error: any) {
       toast.error('Error al crear el juego')
       throw error
@@ -192,50 +304,64 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     
     setGameLoading(true)
     try {
-      // Find game by code
+      // 1. Buscar el juego por código
       const { data: gameData, error: gameError } = await supabase
         .from('games')
-        .select('id, status, code, host_id')
+        .select('*')
         .eq('code', code.toUpperCase())
         .eq('status', 'waiting')
-        .single<GameData>()
+        .single()
 
       if (gameError || !gameData) {
         throw new Error('Juego no encontrado o ya iniciado')
       }
 
-      // Check if already joined
+      // 2. Obtener las categorías del juego
+      const gameId = (gameData as any).id;
+      
+      const { data: categoriesData, error: categoriesError } = await supabase
+        .from('game_categories')
+        .select('*')
+        .eq('game_id', gameId) as { data: GameCategory[] | null; error: any };
+      
+      const categories = categoriesError || !categoriesData 
+        ? [] 
+        : categoriesData.map(cat => cat.category_id);
+
+      // 3. Verificar si el usuario ya está unido al juego
       const { data: existingPlayer } = await supabase
         .from('game_players')
         .select('id')
-        .eq('game_id', gameData.id)
+        .eq('game_id', gameId)
         .eq('player_id', user.id)
         .single()
 
       if (!existingPlayer) {
-        // Join game
+        // Unirse al juego
         const { error: playerError } = await insert('game_players', {
-          game_id: gameData.id,
+          game_id: gameId,
           player_id: user.id,
           is_ready: false,
           score: 0,
           joined_at: new Date().toISOString()
-        })
+        });
 
-        if (playerError) throw playerError
+        if (playerError) throw playerError;
       }
 
-      await joinGameById(gameData.id)
-      toast.success('Te has unido al juego')
+      // 4. Cargar el juego completo con jugadores y categorías
+      await joinGameById(gameId, categories);
+      toast.success('¡Te has unido al juego exitosamente!');
     } catch (error: any) {
-      toast.error(error.message || 'Error al unirse al juego')
-      throw error
+      console.error('Error al unirse al juego:', error);
+      toast.error(error.message || 'Error al unirse al juego');
+      throw error;
     } finally {
-      setGameLoading(false)
+      setGameLoading(false);
     }
   }
 
-  const joinGameById = async (gameId: string) => {
+  const joinGameById = async (gameId: string, initialCategories: string[] = []) => {
     try {
       const { data: gameData, error: gameError } = await supabase
         .from('games')
@@ -246,16 +372,30 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (gameError) throw gameError
       if (!gameData) throw new Error('Juego no encontrado')
 
+      // Si no se proporcionaron categorías, intentar cargarlas
+      let categoriesToUse = [...initialCategories];
+      if (categoriesToUse.length === 0) {
+        const { data: categoriesData } = await supabase
+          .from('game_categories')
+          .select('*')
+          .eq('game_id', gameId) as { data: GameCategory[] | null };
+        
+        if (categoriesData) {
+          categoriesToUse = categoriesData.map(cat => cat.category_id);
+        }
+      }
+
       setCurrentGame({
         ...gameData,
+        categories: categoriesToUse,
         players: [],
         stop_countdown: gameData.stop_countdown || 0
-      })
+      });
 
-      await loadGamePlayers(gameId)
+      await loadGamePlayers(gameId);
     } catch (error) {
-      console.error('Error al cargar el juego:', error)
-      throw error
+      console.error('Error al cargar el juego:', error);
+      throw error;
     }
   }
 
@@ -397,6 +537,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     currentGame,
     playerAnswers,
     gameLoading,
+    availableCategories,
+    categoriesLoading,
     createGame,
     joinGame,
     leaveGame,
@@ -405,8 +547,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     callStop,
     setPlayerReady,
     updateAnswer,
-    resetAnswers
-  }
+    resetAnswers,
+    loadCategories,
+  };
 
   return (
     <GameContext.Provider value={value}>

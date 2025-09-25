@@ -49,15 +49,20 @@ export interface RoundResults {
   total_points: number
 }
 
-export const DEFAULT_CATEGORIES = [
-  'Nombre',
-  'País',
-  'Ciudad',
-  'Animal',
-  'Fruta',
-  'Comida',
-  'Objeto',
-  'Profesión'
+export interface Category {
+  id: string;
+  name: string;
+}
+
+export const DEFAULT_CATEGORIES: Category[] = [
+  { id: '1', name: 'Nombre' },
+  { id: '2', name: 'País' },
+  { id: '3', name: 'Ciudad' },
+  { id: '4', name: 'Animal' },
+  { id: '5', name: 'Fruta' },
+  { id: '6', name: 'Comida' },
+  { id: '7', name: 'Objeto' },
+  { id: '8', name: 'Profesión' }
 ]
 
 export const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')

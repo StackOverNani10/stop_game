@@ -1,16 +1,24 @@
-import React, { useState } from 'react'
-import { motion } from 'framer-motion'
-import { Copy, Play, UserPlus, Users, Clock, Hash, Crown } from 'lucide-react'
-import { Button } from '../ui/Button'
-import { Card } from '../ui/Card'
-import { useGame } from '../../contexts/GameContext'
-import { useAuth } from '../../contexts/AuthContext'
-import toast from 'react-hot-toast'
+import React, { useState } from 'react';
+import { motion } from 'framer-motion';
+import { Play, UserPlus, Users, Clock, Hash, Crown, Copy } from 'lucide-react';
+import { Button } from '../ui/Button';
+import { Card } from '../ui/Card';
+import { useGame } from '../../contexts/GameContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { ShareGameDialog } from './ShareGameDialog';
+import toast from 'react-hot-toast';
 
 export const GameLobby: React.FC = () => {
-  const { currentGame, startGame, leaveGame, setPlayerReady } = useGame()
+  const { currentGame, startGame, leaveGame, setPlayerReady, availableCategories } = useGame()
   const { user } = useAuth()
   const [ready, setReady] = useState(false)
+  const [showShareDialog, setShowShareDialog] = useState(false)
+
+  // Función para obtener el nombre de una categoría por su ID
+  const getCategoryName = (categoryId: string): string => {
+    const category = availableCategories.find(cat => cat.id === categoryId)
+    return category ? category.name : categoryId // Si no se encuentra, devuelve el ID como último recurso
+  }
 
   if (!currentGame) return null
 
@@ -18,13 +26,8 @@ export const GameLobby: React.FC = () => {
   const gameUrl = `${window.location.origin}/join/${currentGame.code}`
   const allPlayersReady = currentGame.players.length > 1 && currentGame.players.every(p => p.is_ready)
 
-  const copyGameUrl = async () => {
-    try {
-      await navigator.clipboard.writeText(gameUrl)
-      toast.success('Enlace copiado al portapapeles')
-    } catch (error) {
-      toast.error('Error al copiar enlace')
-    }
+  const handleShareClick = () => {
+    setShowShareDialog(true)
   }
 
   const copyGameCode = async () => {
@@ -100,25 +103,29 @@ export const GameLobby: React.FC = () => {
             <div className="mb-6">
               <h3 className="font-medium text-gray-900 mb-2">Categorías:</h3>
               <div className="flex flex-wrap gap-2">
-                {currentGame.categories.map((category, index) => (
-                  <span
-                    key={index}
-                    className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium"
-                  >
-                    {category}
-                  </span>
-                ))}
+                {Array.isArray(currentGame.categories) && currentGame.categories.length > 0
+                  ? currentGame.categories.map((categoryId, index) => (
+                      <span
+                        key={index}
+                        className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium"
+                        title={categoryId} // Mostrar el ID como tooltip por si acaso
+                      >
+                        {getCategoryName(categoryId)}
+                      </span>
+                    ))
+                  : <p className="text-gray-500">No hay categorías seleccionadas</p>
+                }
               </div>
             </div>
 
             <div className="border-t pt-4">
               <Button
-                onClick={copyGameUrl}
+                onClick={handleShareClick}
                 variant="secondary"
                 className="w-full flex items-center justify-center gap-2"
               >
                 <UserPlus className="w-4 h-4" />
-                Compartir enlace de invitación
+                Invitar jugadores
               </Button>
             </div>
           </Card>
@@ -227,6 +234,16 @@ export const GameLobby: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      <ShareGameDialog
+        isOpen={showShareDialog}
+        onClose={() => setShowShareDialog(false)}
+        gameCode={currentGame.code}
+        categories={currentGame.categories || []}
+        maxRounds={currentGame.max_rounds}
+        playerCount={currentGame.players?.length || 0}
+        getCategoryName={getCategoryName}
+      />
     </div>
   )
 }

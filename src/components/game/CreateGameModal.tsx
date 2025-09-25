@@ -1,11 +1,14 @@
 import React, { useState } from 'react'
 import { Dialog } from '@headlessui/react'
-import { X, Plus, Trash2 } from 'lucide-react'
+import { X, Plus, Check } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
 import { Card } from '../ui/Card'
-import { DEFAULT_CATEGORIES } from '../../types/game'
+import { Category } from '../../types/game'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useGame } from '../../contexts/GameContext'
+import { supabase } from '../../lib/supabase'
+import toast from 'react-hot-toast'
 
 interface CreateGameModalProps {
   isOpen: boolean
@@ -20,32 +23,56 @@ export const CreateGameModal: React.FC<CreateGameModalProps> = ({
   onCreateGame,
   loading = false
 }) => {
-  const [categories, setCategories] = useState<string[]>([...DEFAULT_CATEGORIES])
+  const { availableCategories, categoriesLoading, loadCategories } = useGame()
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([])
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [isCreatingCategory, setIsCreatingCategory] = useState(false)
   const [maxRounds, setMaxRounds] = useState(5)
-  const [newCategory, setNewCategory] = useState('')
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (categories.length >= 3) {
-      onCreateGame(categories, maxRounds)
+    if (selectedCategoryIds.length >= 3) {
+      onCreateGame(selectedCategoryIds, maxRounds)
     }
   }
 
-  const addCategory = () => {
-    if (newCategory.trim() && !categories.includes(newCategory.trim())) {
-      setCategories([...categories, newCategory.trim()])
-      setNewCategory('')
-    }
+  const toggleCategory = (categoryId: string) => {
+    setSelectedCategoryIds(prev => 
+      prev.includes(categoryId)
+        ? prev.filter(id => id !== categoryId)
+        : [...prev, categoryId]
+    )
   }
 
-  const removeCategory = (index: number) => {
-    setCategories(categories.filter((_, i) => i !== index))
+  const createNewCategory = async () => {
+    if (!newCategoryName.trim()) return
+    
+    try {
+      setIsCreatingCategory(true)
+      const newCategory = { name: newCategoryName.trim() }
+      const { data, error } = await supabase
+        .from('categories')
+        .insert(newCategory as any)
+        .select()
+        .single()
+      
+      if (error) throw error
+      
+      // Actualizar la lista de categorías disponibles
+      loadCategories()
+      setNewCategoryName('')
+    } catch (error) {
+      console.error('Error creando categoría:', error)
+      toast.error('Error al crear la categoría')
+    } finally {
+      setIsCreatingCategory(false)
+    }
   }
 
   const resetToDefaults = () => {
-    setCategories([...DEFAULT_CATEGORIES])
+    setSelectedCategoryIds([])
     setMaxRounds(5)
-    setNewCategory('')
+    setNewCategoryName('')
   }
 
   return (
@@ -112,21 +139,21 @@ export const CreateGameModal: React.FC<CreateGameModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Add New Category */}
                   <Card className="p-4 bg-gray-50">
-                    <h3 className="font-semibold text-gray-900 mb-3">Agregar Categoría</h3>
+                    <h3 className="font-semibold text-gray-900 mb-3">Crear Nueva Categoría</h3>
                     <div className="flex gap-2">
                       <Input
-                        placeholder="Ej: Color, Marca, Película..."
-                        value={newCategory}
-                        onChange={(e) => setNewCategory(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addCategory())}
+                        placeholder="Nombre de la categoría"
+                        value={newCategoryName}
+                        onChange={(e) => setNewCategoryName(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), createNewCategory())}
                         className="flex-1"
                       />
                       <Button
                         type="button"
-                        onClick={addCategory}
-                        disabled={!newCategory.trim()}
+                        onClick={createNewCategory}
+                        disabled={!newCategoryName.trim() || isCreatingCategory}
+                        loading={isCreatingCategory}
                         size="md"
                       >
                         <Plus className="w-4 h-4" />
@@ -137,41 +164,48 @@ export const CreateGameModal: React.FC<CreateGameModalProps> = ({
                   {/* Categories List */}
                   <div>
                     <h3 className="font-semibold text-gray-900 mb-3">
-                      Categorías ({categories.length})
+                      Categorías ({selectedCategoryIds.length})
                     </h3>
-                    {categories.length < 3 && (
+                    {selectedCategoryIds.length < 3 && (
                       <p className="text-sm text-red-600 mb-3">
-                        Mínimo 3 categorías requeridas
+                        Selecciona al menos 3 categorías
                       </p>
                     )}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <AnimatePresence>
-                        {categories.map((category, index) => (
-                          <motion.div
-                            key={category}
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -20 }}
-                            className="flex items-center justify-between bg-white p-3 rounded-lg border border-gray-200 shadow-sm"
+                    
+                    {categoriesLoading ? (
+                      <div className="flex justify-center py-4">
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600"></div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {availableCategories.map((category) => (
+                          <div 
+                            key={category.id} 
+                            className={`flex items-center p-3 rounded-lg border cursor-pointer transition-colors ${
+                              selectedCategoryIds.includes(category.id)
+                                ? 'bg-indigo-50 border-indigo-200'
+                                : 'bg-white border-gray-200 hover:bg-gray-50'
+                            }`}
+                            onClick={() => toggleCategory(category.id)}
                           >
-                            <span className="text-sm font-medium text-gray-700">
-                              {category}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => removeCategory(index)}
-                              className="text-red-500 hover:text-red-700 transition-colors"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </motion.div>
+                            <div className={`w-5 h-5 rounded border mr-3 flex-shrink-0 flex items-center justify-center ${
+                              selectedCategoryIds.includes(category.id)
+                                ? 'bg-indigo-600 border-indigo-700'
+                                : 'border-gray-300'
+                            }`}>
+                              {selectedCategoryIds.includes(category.id) && (
+                                <Check className="w-3 h-3 text-white" />
+                              )}
+                            </div>
+                            <span className="font-medium text-gray-800">{category.name}</span>
+                          </div>
                         ))}
-                      </AnimatePresence>
-                    </div>
+                      </div>
+                    )}
                   </div>
                 </form>
               </div>
-
+              
               <div className="p-6 border-t border-gray-100 bg-gray-50">
                 <div className="flex gap-3">
                   <Button
@@ -183,7 +217,7 @@ export const CreateGameModal: React.FC<CreateGameModalProps> = ({
                   </Button>
                   <Button
                     onClick={handleSubmit}
-                    disabled={categories.length < 3}
+                    disabled={selectedCategoryIds.length < 3}
                     loading={loading}
                     className="flex-1"
                   >

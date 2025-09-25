@@ -79,6 +79,23 @@ export interface Database {
           created_at?: string
         }
       }
+      categories: {
+        Row: {
+          id: string
+          name: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          created_at?: string
+        }
+        Update: {
+          id?: never
+          name?: string
+          created_at?: string
+        }
+      }
       game_players: {
         Row: {
           id: string

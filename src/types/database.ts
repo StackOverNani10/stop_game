@@ -15,6 +15,7 @@ export interface Database {
         Row: {
           id: string
           email: string
+          username: string | null
           full_name: string | null
           avatar_url: string | null
           games_played: number
@@ -26,6 +27,7 @@ export interface Database {
         Insert: {
           id: string
           email: string
+          username?: string | null
           full_name?: string | null
           avatar_url?: string | null
           games_played?: number
@@ -37,6 +39,7 @@ export interface Database {
         Update: {
           id?: string
           email?: string
+          username?: string | null
           full_name?: string | null
           avatar_url?: string | null
           games_played?: number

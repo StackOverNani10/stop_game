@@ -10,34 +10,47 @@ import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 
 export const Dashboard: React.FC = () => {
-  const { profile, loading: authLoading } = useAuth()
+  const { profile, loading: authLoading, user, session } = useAuth()
   const { createGame, gameLoading } = useGame()
   const navigate = useNavigate()
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
+  const [isInitialLoad, setIsInitialLoad] = useState(true)
+  const [profileLoaded, setProfileLoaded] = useState(false)
 
-  const handleCreateGame = async (categories: string[], maxRounds: number) => {
+  // Handle profile loaded state
+  useEffect(() => {
+    if (profile && user) {
+      setProfileLoaded(true);
+    }
+  }, [profile, user]);
+
+  // Handle authentication state and redirects
+  useEffect(() => {
+    if (authLoading) {
+      return;
+    }
+
+    if (!user) {
+      navigate('/auth');
+      return;
+    }
+
+    if (isInitialLoad) {
+      setIsInitialLoad(false);
+    }
+  }, [authLoading, user, navigate, isInitialLoad, profile]);
+
+  const handleCreateGame = async (categoryIds: string[], maxRounds: number) => {
     try {
-      const gameCode = await createGame(categories, maxRounds)
+      const gameCode = await createGame(categoryIds, maxRounds)
       setShowCreateModal(false)
       navigate('/game')
       toast.success(`¡Partida creada! Código: ${gameCode}`)
     } catch (error) {
       console.error('Error creating game:', error)
+      toast.error('Error al crear la partida. Por favor intenta de nuevo.');
     }
   }
-
-  // Efecto para manejar la carga del perfil
-  useEffect(() => {
-    if (!authLoading) {
-      // Pequeño retraso para asegurar que la animación de carga se vea
-      const timer = setTimeout(() => {
-        setIsLoading(false);
-      }, 500);
-      
-      return () => clearTimeout(timer);
-    }
-  }, [authLoading, profile]);
 
   const stats = [
     {
@@ -61,18 +74,27 @@ export const Dashboard: React.FC = () => {
       color: 'text-purple-600',
       bg: 'bg-purple-100'
     }
-  ]
+  ];
 
-  // Mostrar carga mientras se verifica la autenticación y se carga el perfil
-  if (isLoading) {
+  // Show loading state while checking auth, initial load, or waiting for profile
+  if (authLoading || isInitialLoad || !profileLoaded) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
           <p className="mt-4 text-lg text-gray-700">Cargando tu perfil...</p>
+          <p className="text-sm text-gray-500 mt-2">
+            {authLoading ? 'Verificando autenticación...' : 
+             !profileLoaded ? 'Cargando datos del perfil...' : 'Preparando el tablero...'}
+          </p>
         </div>
       </div>
     );
+  }
+
+  // If no user but not loading, redirect should happen in the other effect
+  if (!user) {
+    return null;
   }
 
   return (
