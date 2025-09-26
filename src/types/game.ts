@@ -3,7 +3,7 @@ export interface GameState {
   code: string
   host_id: string
   status: 'waiting' | 'playing' | 'finished'
-  current_round: number
+  current_round_number: number  // Cambiado de current_round a current_round_number
   current_letter: string | null
   categories: string[]
   max_rounds: number
@@ -12,6 +12,8 @@ export interface GameState {
   players: GamePlayerState[]
   created_at: string
   updated_at: string
+  // Mantener current_round como opcional para compatibilidad
+  current_round?: number
 }
 
 export interface PlayerProfile {

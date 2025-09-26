@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Play, UserPlus, Users, Clock, Hash, Crown, Copy } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -9,15 +9,21 @@ import { ShareGameDialog } from './ShareGameDialog';
 import toast from 'react-hot-toast';
 
 export const GameLobby: React.FC = () => {
-  const { currentGame, startGame, leaveGame, setPlayerReady, availableCategories } = useGame()
+  const { currentGame, startGame, leaveGame, setPlayerReady, availableCategories, loadCategories } = useGame()
   const { user } = useAuth()
   const [ready, setReady] = useState(false)
   const [showShareDialog, setShowShareDialog] = useState(false)
 
+  // Cargar categorías disponibles cuando se monte el componente
+  useEffect(() => {
+    loadCategories()
+  }, [loadCategories])
+
   // Función para obtener el nombre de una categoría por su ID
   const getCategoryName = (categoryId: string): string => {
-    const category = availableCategories.find(cat => cat.id === categoryId)
-    return category ? category.name : categoryId // Si no se encuentra, devuelve el ID como último recurso
+    if (!availableCategories || availableCategories.length === 0) return categoryId;
+    const category = availableCategories.find(cat => cat.id === categoryId);
+    return category ? category.name : categoryId;
   }
 
   if (!currentGame) return null

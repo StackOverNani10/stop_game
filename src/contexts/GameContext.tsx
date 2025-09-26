@@ -2,14 +2,21 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { supabase, insert } from '../lib/supabase'
 import type { Database } from '../types/database.types'
 import { useAuth } from './AuthContext'
-import { GameState, PlayerAnswers, RoundResults, LETTERS, PlayerData } from '../types/game'
+import { GameState, PlayerAnswers, RoundResults, LETTERS, PlayerData } from '../types/game';
 
+// Interfaz para el perfil del jugador
+interface PlayerProfile {
+  id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  email: string;
+}
 interface DatabaseGame {
   id: string
   code: string
   host_id: string
   status: 'waiting' | 'playing' | 'finished'
-  current_round: number
+  current_round_number: number
   current_letter: string | null
   categories: string[]
   max_rounds: number
@@ -95,36 +102,116 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error) {
       console.error('Error cargando categorías:', error)
       toast.error('Error al cargar las categorías')
-    } finally {
       setCategoriesLoading(false)
     }
   }, [])
 
-  // Cargar categorías cuando el usuario esté autenticado
+  // Efecto para manejar suscripciones en tiempo real
   useEffect(() => {
-    if (user) {
-      loadCategories()
-    }
-  }, [user, loadCategories])
+    if (!currentGame) return;
 
-  // Subscribe to game updates
-  useEffect(() => {
-    if (!currentGame?.id) return
+    console.log('Iniciando suscripciones para el juego:', currentGame.id);
 
-    const subscription = supabase
-      .channel(`game:${currentGame.id}`)
-      .on('system' as any, { event: 'postgres_changes' } as any, (payload: any) => {
-        if (payload.table === 'games' && payload.new?.id === currentGame.id) {
-          handleGameUpdate(payload)
-        } else if (payload.table === 'game_players' && payload.new?.game_id === currentGame.id) {
-          handlePlayersUpdate()
+    // Suscripción a cambios en los jugadores del juego
+    const playersSubscription = supabase
+      .channel(`game_players_${currentGame.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'game_players',
+          filter: `game_id=eq.${currentGame.id}`
+        },
+        async (payload) => {
+          console.log('Cambio en jugadores:', payload);
+          // Forzar una recarga completa de los jugadores
+          await loadGamePlayers(currentGame.id);
+          
+          // Mostrar notificación cuando un jugador nuevo se una
+          if (payload.eventType === 'INSERT') {
+            const { data: playerProfile, error } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', payload.new.player_id)
+              .single<PlayerProfile>();
+              
+            if (playerProfile && !error) {
+              toast.success(`${playerProfile.full_name || 'Un jugador'} se ha unido al juego`);
+            } else if (error) {
+              console.error('Error al cargar el perfil del jugador:', error);
+            }
+          }
         }
-      })
-      .subscribe()
+      )
+      .subscribe((status) => {
+        console.log('Estado de la suscripción a jugadores:', status);
+      });
 
+    // Suscripción a cambios en el estado del juego
+    const gameSubscription = supabase
+      .channel(`game_state_${currentGame.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'games',
+          filter: `id=eq.${currentGame.id}`
+        },
+        async (payload) => {
+          console.log('Cambio en el estado del juego:', payload);
+          
+          if (payload.eventType === 'UPDATE') {
+            // Actualizar el estado local del juego
+            setCurrentGame(prev => {
+              if (!prev) return null;
+              
+              // Si el juego acaba de comenzar
+              if (payload.new.status === 'playing' && prev.status === 'waiting') {
+                toast.success('¡La partida ha comenzado!');
+                resetAnswers();
+              }
+              
+              // Si el juego ha terminado
+              if (payload.new.status === 'finished' && prev.status !== 'finished') {
+                toast('La partida ha terminado', { icon: '🏁' });
+              }
+              
+              return { ...prev, ...payload.new };
+            });
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('Estado de la suscripción al juego:', status);
+      });
+
+    // Suscripción a cambios en las respuestas de los jugadores
+    const answersSubscription = supabase
+      .channel(`game_answers_${currentGame.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'round_answers',
+          filter: `game_id=eq.${currentGame.id}`
+        },
+        (payload) => {
+          console.log('Cambio en respuestas:', payload);
+          // Aquí podrías actualizar el estado de las respuestas si es necesario
+        }
+      )
+      .subscribe();
+
+    // Limpieza al desmontar
     return () => {
-      subscription.unsubscribe()
-    }
+      console.log('Limpiando suscripciones');
+      supabase.removeChannel(playersSubscription);
+      supabase.removeChannel(gameSubscription);
+      supabase.removeChannel(answersSubscription);
+    };
   }, [currentGame?.id])
 
   const handleGameUpdate = useCallback((payload: any) => {
@@ -268,6 +355,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const localGameState: GameState = {
         ...minimalGameData,
         categories: categories,
+        current_round_number: 0, // Inicializar en 0
         players: [
           {
             id: currentUser.id,
@@ -392,7 +480,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...gameData,
         categories: categoriesToUse,
         players: [],
-        stop_countdown: gameData.stop_countdown || 0
+        stop_countdown: gameData.stop_countdown || 0,
+        current_round_number: gameData.current_round_number || 0 // Asegurar que current_round_number esté definido
       });
 
       await loadGamePlayers(gameId);
@@ -428,13 +517,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)]
       const now = new Date().toISOString()
+      const currentRound = 1;
 
       // Actualizar el estado local inmediatamente para una mejor experiencia de usuario
       setCurrentGame(prev => prev ? {
         ...prev,
         status: 'playing',
         current_letter: randomLetter,
-        current_round: 1,
+        current_round: currentRound,
+        current_round_number: currentRound, // Mantener para compatibilidad con el código existente
         updated_at: now
       } : null)
 
@@ -442,12 +533,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { error } = await (supabase
         .from('games')
         .update as any)({
-        status: 'playing',
-        current_letter: randomLetter,
-        current_round: 1,
-        updated_at: now
-      })
-      .eq('id', currentGame.id)
+          status: 'playing',
+          current_letter: randomLetter,
+          current_round: currentRound,
+          updated_at: now
+        })
+        .eq('id', currentGame.id)
 
       if (error) {
         // Revertir el estado local si hay un error
@@ -469,26 +560,62 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   const submitAnswers = async (answers: PlayerAnswers) => {
-    if (!currentGame || !user) return
+    if (!currentGame || !user) {
+      console.error('No current game or user');
+      return;
+    }
 
     try {
-      const roundAnswers: Database['public']['Tables']['round_answers']['Insert'][] = Object.entries(answers).map(([category, answer]) => ({
+      console.log('Submitting answers:', answers);
+      console.log('Current game round:', currentGame.current_round);
+      
+      // Verificar que tengamos respuestas para enviar
+      if (Object.keys(answers).length === 0) {
+        console.warn('No answers to submit');
+        return;
+      }
+
+      // Crear el objeto de respuesta con los nombres de columna correctos
+      const roundAnswers = Object.entries(answers).map(([category, answer]) => ({
         game_id: currentGame.id,
         player_id: user.id,
-        round: currentGame.current_round,
-        category,
+        round_number: currentGame.current_round_number,  // Usar 'round_number' que es el nombre correcto en la base de datos
+        category: category,
         answer: answer.trim(),
-        points: 0
-      }))
+        points: 0,
+        is_unique: false,
+        created_at: new Date().toISOString()
+      }));
 
-      const { error } = await insert('round_answers', roundAnswers)
+      console.log('Sending to database:', roundAnswers);
+      
+      // Intentar insertar las respuestas usando la función insert del helper
+      const { data, error } = await insert('round_answers', roundAnswers);
 
-      if (error) throw error
+      if (error) {
+        console.error('Database error details:', error);
+        throw new Error(`Database error: ${error.message}`);
+      }
 
-      toast.success('Respuestas enviadas')
+      console.log('Insert successful, response:', data);
+      toast.success('Respuestas enviadas');
     } catch (error: any) {
-      console.error('Error submitting answers:', error)
-      toast.error('Error al enviar respuestas')
+      console.error('Error submitting answers:', error);
+      toast.error(error.message || 'Error al enviar respuestas');
+      
+      // Intentar obtener más información sobre la estructura de la tabla
+      try {
+        const { data: columns, error: columnsError } = await supabase
+          .rpc('get_columns_info', { table_name: 'round_answers' });
+          
+        if (!columnsError) {
+          console.log('Table columns:', columns);
+        } else {
+          console.error('Error getting table info:', columnsError);
+        }
+      } catch (e) {
+        console.error('Could not retrieve table info:', e);
+      }
     }
   }
 

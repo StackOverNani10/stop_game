@@ -52,30 +52,33 @@ export interface Database {
           id: string
           game_id: string
           player_id: string
-          round: number
+          round_number: number  // Cambiado de 'round' a 'round_number'
           category: string
           answer: string
           points: number
+          is_unique: boolean
           created_at: string
         }
         Insert: {
           id?: string
           game_id: string
           player_id: string
-          round: number
+          round_number: number  // Cambiado de 'round' a 'round_number'
           category: string
           answer: string
           points?: number
+          is_unique?: boolean
           created_at?: string
         }
         Update: {
           id?: never
           game_id?: string
           player_id?: string
-          round?: number
+          round_number?: number  // Cambiado de 'round' a 'round_number'
           category?: string
           answer?: string
           points?: number
+          is_unique?: boolean
           created_at?: string
         }
       }
