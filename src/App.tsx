@@ -11,6 +11,7 @@ import { Dashboard } from './pages/Dashboard'
 import { Game } from './pages/Game'
 import { JoinGame } from './pages/JoinGame'
 import { Ranking } from './pages/Ranking'
+import { Profile } from './pages/Profile'
 import VerifyEmail from './pages/VerifyEmail'
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -92,6 +93,16 @@ const AppRoutes: React.FC = () => {
           <ProtectedRoute>
             <Layout>
               <Ranking />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/profile"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <Profile />
             </Layout>
           </ProtectedRoute>
         }
