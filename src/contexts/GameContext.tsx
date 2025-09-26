@@ -87,24 +87,42 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Cargar categorías disponibles
   const loadCategories = useCallback(async () => {
+    console.log('Cargando categorías...');
     try {
-      setCategoriesLoading(true)
+      setCategoriesLoading(true);
+      
+      // Limpiar categorías existentes
+      setAvailableCategories([]);
+      
       const { data, error } = await supabase
         .from('categories')
         .select('*')
-        .order('name')
+        .order('name', { ascending: true });
       
-      if (error) throw error
-      
-      if (data) {
-        setAvailableCategories(data)
+      if (error) {
+        console.error('Error en la consulta de categorías:', error);
+        throw error;
       }
-    } catch (error) {
-      console.error('Error cargando categorías:', error)
-      toast.error('Error al cargar las categorías')
-      setCategoriesLoading(false)
+      
+      if (data && data.length > 0) {
+        console.log(`Categorías cargadas: ${data.length}`);
+        setAvailableCategories(data);
+      } else {
+        console.warn('No se encontraron categorías en la base de datos');
+        toast.error('No se encontraron categorías disponibles');
+      }
+    } catch (error: any) {
+      console.error('Error al cargar categorías:', error);
+      toast.error(error.message || 'Error al cargar las categorías');
+    } finally {
+      setCategoriesLoading(false);
     }
   }, [])
+
+  // Cargar categorías al montar el componente
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
 
   // Efecto para manejar suscripciones en tiempo real
   useEffect(() => {
