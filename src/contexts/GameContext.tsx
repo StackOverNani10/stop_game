@@ -429,7 +429,16 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)]
       const now = new Date().toISOString()
 
-      // Use type assertion to specify the type of the update
+      // Actualizar el estado local inmediatamente para una mejor experiencia de usuario
+      setCurrentGame(prev => prev ? {
+        ...prev,
+        status: 'playing',
+        current_letter: randomLetter,
+        current_round: 1,
+        updated_at: now
+      } : null)
+
+      // Actualizar la base de datos
       const { error } = await (supabase
         .from('games')
         .update as any)({
@@ -440,10 +449,22 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       })
       .eq('id', currentGame.id)
 
-      if (error) throw error
+      if (error) {
+        // Revertir el estado local si hay un error
+        setCurrentGame(prev => prev ? {
+          ...prev,
+          status: 'waiting',
+          current_letter: null,
+          current_round: 0
+        } : null)
+        throw error
+      }
+
+      // Notificar a los jugadores
+      toast.success('¡El juego ha comenzado!', { duration: 3000 })
     } catch (error: any) {
       console.error('Error starting game:', error)
-      toast.error('Error al iniciar el juego')
+      toast.error(error.message || 'Error al iniciar el juego')
     }
   }
 

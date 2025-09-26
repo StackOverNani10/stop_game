@@ -7,12 +7,19 @@ import { Card } from '../ui/Card'
 import { useGame } from '../../contexts/GameContext'
 import { useAuth } from '../../contexts/AuthContext'
 import toast from 'react-hot-toast'
+import { useCallback } from 'react'
 
 export const GamePlay: React.FC = () => {
-  const { currentGame, playerAnswers, updateAnswer, submitAnswers, callStop } = useGame()
+  const { currentGame, playerAnswers, updateAnswer, submitAnswers, callStop, availableCategories } = useGame()
   const { user } = useAuth()
   const [timeLeft, setTimeLeft] = useState(currentGame?.round_time_limit || 120)
   const [hasSubmitted, setHasSubmitted] = useState(false)
+
+  // Función para obtener el nombre de una categoría por su ID
+  const getCategoryName = useCallback((categoryId: string): string => {
+    const category = availableCategories.find(cat => cat.id === categoryId)
+    return category ? category.name : categoryId // Si no se encuentra, devuelve el ID como último recurso
+  }, [availableCategories])
 
   useEffect(() => {
     if (!currentGame || currentGame.status !== 'playing') return
@@ -167,25 +174,25 @@ export const GamePlay: React.FC = () => {
 
       {/* Categories */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-        {currentGame.categories.map((category, index) => (
+        {currentGame.categories.map((categoryId, index) => (
           <motion.div
-            key={category}
+            key={categoryId}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.1 }}
           >
             <Card className="p-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                {category}
+                {getCategoryName(categoryId)}
               </label>
               <Input
                 type="text"
-                placeholder={`${category} con "${currentGame.current_letter}"`}
-                value={playerAnswers[category] || ''}
-                onChange={(e) => updateAnswer(category, e.target.value)}
+                placeholder={`${getCategoryName(categoryId)} con "${currentGame.current_letter}"`}
+                value={playerAnswers[categoryId] || ''}
+                onChange={(e) => updateAnswer(categoryId, e.target.value)}
                 disabled={hasSubmitted}
                 className={`w-full ${
-                  playerAnswers[category]?.trim() 
+                  playerAnswers[categoryId]?.trim() 
                     ? 'border-green-300 bg-green-50' 
                     : 'border-gray-300'
                 }`}
