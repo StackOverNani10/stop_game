@@ -59,12 +59,20 @@ const AppRoutes: React.FC = () => {
         }
       />
       <Route
-        path="/game"
+        path="/game/:gameCode"
         element={
           <ProtectedRoute>
             <Layout>
               <Game />
             </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/game"
+        element={
+          <ProtectedRoute>
+            <Navigate to="/dashboard" replace />
           </ProtectedRoute>
         }
       />

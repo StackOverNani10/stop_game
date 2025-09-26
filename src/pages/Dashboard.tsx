@@ -19,7 +19,8 @@ export const Dashboard: React.FC = () => {
     try {
       const gameCode = await createGame(categoryIds, maxRounds)
       setShowCreateModal(false)
-      navigate('/game')
+      // Navegar a la URL con el código del juego
+      navigate(`/game/${gameCode}`, { replace: true })
       toast.success(`¡Partida creada! Código: ${gameCode}`)
     } catch (error) {
       console.error('Error creating game:', error)

@@ -42,7 +42,7 @@ interface GameContextType {
   availableCategories: DBCategory[]
   categoriesLoading: boolean
   createGame: (categories: string[], maxRounds: number) => Promise<string>
-  joinGame: (code: string) => Promise<void>
+  joinGame: (code: string) => Promise<string>
   leaveGame: () => Promise<void>
   startGame: () => Promise<void>
   submitAnswers: (answers: PlayerAnswers) => Promise<void>
@@ -289,7 +289,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       // 6. Cargar el juego completo
       await joinGameById(gameId);
-
+      
+      // 7. Retornar el código del juego para la navegación
       return gameCode;
     } catch (error: any) {
       toast.error('Error al crear el juego')
@@ -351,7 +352,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // 4. Cargar el juego completo con jugadores y categorías
       await joinGameById(gameId, categories);
-      toast.success('¡Te has unido al juego exitosamente!');
+      
+      // 5. Retornar el código del juego para la navegación
+      return code.toUpperCase();
     } catch (error: any) {
       console.error('Error al unirse al juego:', error);
       toast.error(error.message || 'Error al unirse al juego');
