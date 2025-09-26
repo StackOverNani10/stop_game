@@ -1,30 +1,54 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Play, UserPlus, Users, Clock, Hash, Crown, Copy } from 'lucide-react';
+import { Play, UserPlus, Users, Clock, Hash, Crown, Copy, Settings, AlertTriangle } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { useGame } from '../../contexts/GameContext';
+import { supabase } from '../../lib/supabase';
+import type { Database } from '../../types/database.types';
 import { useAuth } from '../../contexts/AuthContext';
 import { ShareGameDialog } from './ShareGameDialog';
+import { GameSettingsDialog } from './GameSettingsDialog';
+import { ConfirmDialog } from './ConfirmDialog';
 import toast from 'react-hot-toast';
 
 export const GameLobby: React.FC = () => {
-  const { currentGame, startGame, leaveGame, setPlayerReady, availableCategories, loadCategories } = useGame()
+  const { 
+    currentGame, 
+    startGame, 
+    leaveGame, 
+    setPlayerReady, 
+    availableCategories, 
+    loadCategories, 
+    categoriesLoading,
+    updateGameSettings 
+  } = useGame()
   const { user } = useAuth()
   const [ready, setReady] = useState(false)
-  const [showShareDialog, setShowShareDialog] = useState(false)
+  const [showShareDialog, setShowShareDialog] = useState(false);
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [showConfirmLeave, setShowConfirmLeave] = useState(false);
+  const [localCategories, setLocalCategories] = useState<{id: string, name: string}[]>([])
 
   // Cargar categorías disponibles cuando se monte el componente
   useEffect(() => {
-    loadCategories()
+    const fetchCategories = async () => {
+      await loadCategories()
+    }
+    fetchCategories()
   }, [loadCategories])
 
-  // Función para obtener el nombre de una categoría por su ID
-  const getCategoryName = (categoryId: string): string => {
-    if (!availableCategories || availableCategories.length === 0) return categoryId;
-    const category = availableCategories.find(cat => cat.id === categoryId);
-    return category ? category.name : categoryId;
-  }
+  // Sincronizar las categorías disponibles con el estado local
+  useEffect(() => {
+    if (availableCategories && availableCategories.length > 0 && currentGame?.categories) {
+      const loadedCategories = currentGame.categories
+        .map(categoryId => {
+          const category = availableCategories.find(cat => cat.id === categoryId)
+          return category ? { id: categoryId, name: category.name } : { id: categoryId, name: categoryId }
+        })
+      setLocalCategories(loadedCategories)
+    }
+  }, [availableCategories, currentGame?.categories])
 
   if (!currentGame) return null
 
@@ -53,23 +77,55 @@ export const GameLobby: React.FC = () => {
 
   const handleStartGame = async () => {
     if (isHost && currentGame.players.length >= 2) {
-      await startGame()
+      await startGame();
     }
-  }
+  };
 
+  const handleUpdateSettings = async (settings: {
+    max_rounds: number;
+    round_time_limit: number;
+    stop_countdown: number;
+  }) => {
+    try {
+      // Usar la función del contexto para actualizar la configuración
+      await updateGameSettings({
+        max_rounds: settings.max_rounds,
+        round_time_limit: Number(settings.round_time_limit) || 30,
+        stop_countdown: Number(settings.stop_countdown) || 10
+      });
+    } catch (error) {
+      console.error('Error al actualizar la configuración:', error);
+      toast.error('Error al actualizar la configuración');
+      throw error;
+    }
+  };
+  
+  if (!currentGame) return null;
+  
   return (
     <div className="max-w-4xl mx-auto p-6">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="text-center mb-8"
       >
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          Sala de Espera
-        </h1>
-        <p className="text-gray-600">
-          Esperando jugadores para comenzar la partida
-        </p>
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Sala de espera</h1>
+            <p className="text-sm text-gray-600">Esperando jugadores para empezar la partida</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {isHost && (
+                <Button 
+                  variant="secondary"
+                  onClick={() => setShowSettingsDialog(true)}
+                  className="flex items-center gap-2 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 hover:text-indigo-700 transition-colors shadow-sm"
+                >
+                  <Settings className="w-4 h-4" />
+                  Configuración
+                </Button>
+            )}
+          </div>
+        </div>
       </motion.div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -88,13 +144,12 @@ export const GameLobby: React.FC = () => {
                 </p>
                 <p className="text-blue-600 text-sm">Código de la sala</p>
                 <Button
-                  variant="secondary"
                   size="sm"
                   onClick={copyGameCode}
-                  className="mt-2 w-full"
+                  className="mt-2 w-full bg-blue-600 hover:bg-blue-100 text-white hover:text-blue-800 border border-blue-600 hover:border-blue-200 transition-all duration-200 flex items-center justify-center gap-1.5 py-1.5 font-medium shadow-sm hover:shadow-md"
                 >
-                  <Copy className="w-3 h-3 mr-1" />
-                  Copiar
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copiar código</span>
                 </Button>
               </div>
               
@@ -104,23 +159,50 @@ export const GameLobby: React.FC = () => {
                 </p>
                 <p className="text-green-600 text-sm">Rondas totales</p>
               </div>
+
+              <div className="bg-yellow-50 p-4 rounded-lg">
+                <div className="flex items-center gap-2 mb-1">
+                  <Clock className="w-4 h-4 text-yellow-600" />
+                  <p className="text-yellow-700 font-semibold text-xl">
+                    {currentGame.round_time_limit} seg
+                  </p>
+                </div>
+                <p className="text-yellow-600 text-sm">Tiempo de respuesta</p>
+              </div>
+
+              <div className="bg-red-50 p-4 rounded-lg">
+                <div className="flex items-center gap-2 mb-1">
+                  <Clock className="w-4 h-4 text-red-600" />
+                  <p className="text-red-700 font-semibold text-xl">
+                    {currentGame.stop_countdown} seg
+                  </p>
+                </div>
+                <p className="text-red-600 text-sm">Tiempo de STOP</p>
+              </div>
             </div>
 
             <div className="mb-6">
               <h3 className="font-medium text-gray-900 mb-2">Categorías:</h3>
               <div className="flex flex-wrap gap-2">
-                {Array.isArray(currentGame.categories) && currentGame.categories.length > 0
-                  ? currentGame.categories.map((categoryId, index) => (
-                      <span
-                        key={index}
-                        className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium"
-                        title={categoryId} // Mostrar el ID como tooltip por si acaso
-                      >
-                        {getCategoryName(categoryId)}
-                      </span>
-                    ))
-                  : <p className="text-gray-500">No hay categorías seleccionadas</p>
-                }
+                {categoriesLoading ? (
+                  <div className="flex gap-2 w-full">
+                    {Array(3).fill(0).map((_, i) => (
+                      <div key={i} className="h-8 w-24 bg-gray-200 rounded-full animate-pulse"></div>
+                    ))}
+                  </div>
+                ) : localCategories.length > 0 ? (
+                  localCategories.map((category, index) => (
+                    <span
+                      key={category.id}
+                      className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium"
+                      title={category.name}
+                    >
+                      {category.name}
+                    </span>
+                  ))
+                ) : (
+                  <p className="text-gray-500">No hay categorías seleccionadas</p>
+                )}
               </div>
             </div>
 
@@ -231,13 +313,28 @@ export const GameLobby: React.FC = () => {
 
           {/* Leave Game */}
           <Button
-            onClick={leaveGame}
+            onClick={() => setShowConfirmLeave(true)}
             variant="danger"
             size="sm"
             className="w-full"
           >
             Salir de la Partida
           </Button>
+          
+          <ConfirmDialog
+            isOpen={showConfirmLeave}
+            onClose={() => setShowConfirmLeave(false)}
+            onConfirm={leaveGame}
+            title={isHost ? "¿Eliminar partida?" : "¿Salir de la partida?"}
+            message={
+              isHost 
+                ? "Eres el anfitrión. Si sales, la partida se eliminará para todos los jugadores. ¿Estás seguro?"
+                : "¿Estás seguro de que quieres salir de la partida?"
+            }
+            confirmText={isHost ? "Sí, eliminar" : "Sí, salir"}
+            cancelText="Cancelar"
+            isDanger={isHost}
+          />
         </div>
       </div>
 
@@ -245,11 +342,23 @@ export const GameLobby: React.FC = () => {
         isOpen={showShareDialog}
         onClose={() => setShowShareDialog(false)}
         gameCode={currentGame.code}
-        categories={currentGame.categories || []}
+        categories={localCategories}
         maxRounds={currentGame.max_rounds}
         playerCount={currentGame.players?.length || 0}
-        getCategoryName={getCategoryName}
       />
+
+      {isHost && (
+        <GameSettingsDialog
+          isOpen={showSettingsDialog}
+          onClose={() => setShowSettingsDialog(false)}
+          currentSettings={{
+            max_rounds: currentGame.max_rounds,
+            round_time_limit: currentGame.round_time_limit,
+            stop_countdown: currentGame.stop_countdown
+          }}
+          onSave={handleUpdateSettings}
+        />
+      )}
     </div>
   )
 }

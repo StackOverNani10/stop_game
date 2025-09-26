@@ -19,6 +19,8 @@ export interface Database {
           status: 'waiting' | 'playing' | 'finished'
           current_letter: string | null
           current_round: number
+          round_time_limit: number
+          stop_countdown: number
           created_at: string
           updated_at: string
         }
@@ -31,6 +33,8 @@ export interface Database {
           status?: 'waiting' | 'playing' | 'finished'
           current_letter?: string | null
           current_round?: number
+          round_time_limit?: number
+          stop_countdown?: number
           created_at?: string
           updated_at?: string
         }
@@ -43,6 +47,8 @@ export interface Database {
           status?: 'waiting' | 'playing' | 'finished'
           current_letter?: string | null
           current_round?: number
+          round_time_limit?: number
+          stop_countdown?: number
           created_at?: string
           updated_at?: string
         }

@@ -5,6 +5,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
+import { BottomNavBar } from '../components/layout/BottomNavBar';
 
 export const Profile: React.FC = () => {
   const { user, profile, updateProfile } = useAuth();
@@ -71,17 +72,17 @@ export const Profile: React.FC = () => {
   };
 
   return (
-    <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <h2 className="text-xl font-semibold text-gray-900">Tu perfil</h2>
+    <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-5 border-b border-gray-100 sm:px-8">
+          <h2 className="text-xl font-semibold text-gray-900">Tu Perfil</h2>
           <p className="mt-1 text-sm text-gray-500">
             Actualiza tu información personal y preferencias.
           </p>
         </div>
         
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
-          <div className="flex flex-col sm:flex-row gap-8">
+        <form onSubmit={handleSubmit} className="p-6 space-y-6 sm:px-8 sm:py-7">
+          <div className="flex flex-col sm:flex-row gap-8 max-w-3xl mx-auto">
             <div className="flex-shrink-0">
               <div className="relative group">
                 <div className="w-24 h-24 rounded-full bg-gray-100 overflow-hidden">
@@ -125,7 +126,7 @@ export const Profile: React.FC = () => {
             <div className="flex-1 space-y-4">
               <div>
                 <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                  Correo electrónico
+                  Correo electr nico
                 </label>
                 <div className="mt-1">
                   <Input
@@ -174,9 +175,9 @@ export const Profile: React.FC = () => {
           </div>
         </form>
         
-        <div className="px-6 py-4 bg-gray-50 border-t border-gray-100">
+        <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 sm:px-8">
           <h3 className="text-sm font-medium text-gray-700">Estadísticas</h3>
-          <div className="mt-2 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className="mt-2 grid grid-cols-2 gap-4 sm:grid-cols-4 max-w-3xl mx-auto">
             <div className="px-4 py-3 bg-white rounded-lg shadow-xs">
               <p className="text-xs font-medium text-gray-500">Juegos jugados</p>
               <p className="mt-1 text-lg font-semibold text-gray-900">
@@ -204,6 +205,7 @@ export const Profile: React.FC = () => {
           </div>
         </div>
       </div>
+      <BottomNavBar />
     </div>
   );
 };

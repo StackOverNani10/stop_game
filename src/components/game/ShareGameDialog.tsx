@@ -5,14 +5,18 @@ import { Dialog } from '@headlessui/react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 
+interface Category {
+  id: string;
+  name: string;
+}
+
 interface ShareGameDialogProps {
   isOpen: boolean;
   onClose: () => void;
   gameCode: string;
-  categories: string[];
+  categories: Category[];
   maxRounds: number;
   playerCount: number;
-  getCategoryName: (id: string) => string;
 }
 
 export const ShareGameDialog: React.FC<ShareGameDialogProps> = ({
@@ -21,15 +25,14 @@ export const ShareGameDialog: React.FC<ShareGameDialogProps> = ({
   gameCode,
   categories,
   maxRounds,
-  playerCount,
-  getCategoryName
+  playerCount
 }) => {
   const gameUrl = `${window.location.origin}/join/${gameCode}`;
   const shareText = `¡Únete a mi partida de Stop! 🎮\n\n` +
     `Código: ${gameCode}\n` +
     `Rondas: ${maxRounds}\n` +
     `Jugadores: ${playerCount}\n` +
-    `Categorías: ${categories.map(catId => getCategoryName(catId)).join(', ')}\n\n` +
+    `Categorías: ${categories.map(cat => cat.name).join(', ')}\n\n` +
     `Haz clic en el enlace para unirte:\n${gameUrl}`;
 
   const copyToClipboard = async () => {

@@ -52,6 +52,11 @@ interface GameContextType {
   joinGame: (code: string) => Promise<string>
   leaveGame: () => Promise<void>
   startGame: () => Promise<void>
+  updateGameSettings: (settings: {
+    max_rounds: number;
+    round_time_limit: number;
+    stop_countdown: number;
+  }) => Promise<void>
   submitAnswers: (answers: PlayerAnswers) => Promise<void>
   callStop: () => Promise<void>
   setPlayerReady: (ready: boolean) => Promise<void>
@@ -510,24 +515,107 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   const leaveGame = async () => {
-    if (!currentGame || !user) return
+    if (!currentGame || !user) return;
 
     try {
-      const { error } = await supabase
+      // Verificar si el usuario es el anfitrión
+      const isHost = currentGame.host_id === user.id;
+      
+      // Eliminar al jugador de la partida
+      const { error: playerError } = await supabase
         .from('game_players')
         .delete()
         .eq('game_id', currentGame.id)
-        .eq('player_id', user.id)
+        .eq('player_id', user.id);
 
-      if (error) throw error
+      if (playerError) throw playerError;
 
-      setCurrentGame(null)
-      resetAnswers()
-      toast.success('Has salido del juego')
+      // Si el anfitrión abandona, eliminar la partida
+      if (isHost) {
+        // Primero eliminamos a todos los jugadores
+        const { error: deletePlayersError } = await supabase
+          .from('game_players')
+          .delete()
+          .eq('game_id', currentGame.id);
+
+        if (deletePlayersError) throw deletePlayersError;
+
+        // Eliminamos las categorías asociadas a la partida
+        const { error: deleteCategoriesError } = await supabase
+          .from('game_categories')
+          .delete()
+          .eq('game_id', currentGame.id);
+
+        if (deleteCategoriesError) throw deleteCategoriesError;
+
+        // Luego eliminamos la partida
+        const { error: deleteGameError } = await supabase
+          .from('games')
+          .delete()
+          .eq('id', currentGame.id);
+
+        if (deleteGameError) throw deleteGameError;
+        
+        toast.success('La partida ha sido eliminada');
+      } else {
+        toast.success('Has salido de la partida');
+      }
+
+      // Limpiar el estado local
+      setCurrentGame(null);
+      resetAnswers();
     } catch (error: any) {
-      toast.error('Error al salir del juego')
+      console.error('Error al salir del juego:', error);
+      toast.error(error.message || 'Error al salir del juego');
     }
   }
+
+  const updateGameSettings = async (settings: {
+    max_rounds: number;
+    round_time_limit: number;
+    stop_countdown: number;
+  }) => {
+    if (!currentGame || !user || currentGame.host_id !== user.id) return;
+
+    try {
+      const now = new Date().toISOString();
+      
+      // Actualizar el estado local inmediatamente para una mejor experiencia de usuario
+      setCurrentGame(prev => prev ? {
+        ...prev,
+        max_rounds: settings.max_rounds,
+        round_time_limit: settings.round_time_limit,
+        stop_countdown: settings.stop_countdown,
+        updated_at: now
+      } : null);
+
+      // Actualizar la base de datos usando una consulta SQL directa
+      const { error } = await supabase.rpc('update_game_settings', {
+        p_game_id: currentGame.id,
+        p_max_rounds: settings.max_rounds,
+        p_round_time_limit: settings.round_time_limit,
+        p_stop_countdown: settings.stop_countdown
+      });
+
+      if (error) {
+        // Revertir el estado local si hay un error
+        setCurrentGame(prev => prev ? {
+          ...prev,
+          max_rounds: currentGame.max_rounds,
+          round_time_limit: currentGame.round_time_limit,
+          stop_countdown: currentGame.stop_countdown
+        } : null);
+        throw error;
+      }
+
+      // Notificar al usuario
+      toast.success('Configuración actualizada correctamente');
+    } catch (error: any) {
+      console.error('Error updating game settings:', error);
+      toast.error(error.message || 'Error al actualizar la configuración del juego');
+      throw error;
+    }
+  };
 
   const startGame = async () => {
     if (!currentGame || !user || currentGame.host_id !== user.id) return
@@ -712,12 +800,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     joinGame,
     leaveGame,
     startGame,
+    updateGameSettings,
     submitAnswers,
     callStop,
     setPlayerReady,
     updateAnswer,
     resetAnswers,
-    loadCategories,
+    loadCategories
   };
 
   return (
