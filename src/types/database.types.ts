@@ -122,6 +122,44 @@ export interface Database {
           score?: number
         }
       }
+      profiles: {
+        Row: {
+          id: string
+          email: string
+          username: string | null
+          full_name: string | null
+          avatar_url: string | null
+          games_played: number
+          games_won: number
+          total_points: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          email: string
+          username?: string | null
+          full_name?: string | null
+          avatar_url?: string | null
+          games_played?: number
+          games_won?: number
+          total_points?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: never
+          email?: string
+          username?: string | null
+          full_name?: string | null
+          avatar_url?: string | null
+          games_played?: number
+          games_won?: number
+          total_points?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never

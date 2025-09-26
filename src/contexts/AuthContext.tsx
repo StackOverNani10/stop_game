@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { User, Session } from '@supabase/supabase-js'
+import { User, Session, Subscription } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { Database } from '../types/database'
 import { Profile } from '../types/database'
@@ -33,7 +33,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [initialized, setInitialized] = useState(false)
-  
+
   const loadProfile = async (userId: string, forceRefresh = false): Promise<Profile | null> => {
     try {
       // Try to get profile from localStorage first
@@ -43,7 +43,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // If we have a cached profile and don't force refresh, use it
       if (profile && !forceRefresh) {
         setProfile(profile);
-        
+
         // Update in background without blocking UI
         setTimeout(async () => {
           try {
@@ -52,7 +52,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               .select('*')
               .eq('id', userId)
               .single();
-            
+
             if (freshProfile) {
               localStorage.setItem(`profile_${userId}`, JSON.stringify(freshProfile));
               setProfile(freshProfile);
@@ -61,7 +61,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.error('Background profile update failed:', error);
           }
         }, 0);
-        
+
         return profile;
       }
 
@@ -85,7 +85,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const email = userData?.email || '';
         const fullName = userData?.user_metadata?.full_name || 'Usuario';
         const username = email.split('@')[0] || 'usuario';
-        
+
         const newProfile: Profile = {
           id: userId,
           email,
@@ -106,18 +106,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             user_email: newProfile.email,
             user_full_name: newProfile.full_name || ''
           });
-          
+
           if (insertError) throw insertError;
-          
+
           // Fetch the newly created profile
           const { data: fetchedProfile } = await supabase
             .from('profiles')
             .select('*')
             .eq('id', newProfile.id)
             .single();
-            
+
           if (!fetchedProfile) throw new Error('Failed to fetch created profile');
-          
+
           if (fetchedProfile) {
             localStorage.setItem(`profile_${userId}`, JSON.stringify(fetchedProfile));
             setProfile(fetchedProfile);
@@ -141,7 +141,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Error fetching profile:', error);
         throw error;
       }
-      
+
       // If we get here, something unexpected happened
       return null;
     } catch (error) {
@@ -150,80 +150,94 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return null;
     }
   };
-  
+
   useEffect(() => {
     let isMounted = true;
-    
-    // Get initial session
-    const getInitialSession = async () => {
+    let authListener: { data: { subscription: Subscription } } | null = null;
+
+    const init = async () => {
       try {
         setLoading(true);
-        const { data: { session }, error } = await supabase.auth.getSession()
-        
-        if (!isMounted) {
+        // Obtener la sesión actual
+        const { data: { session }, error } = await supabase.auth.getSession();
+
+        if (error) {
+          console.error("Error obteniendo sesión:", error);
+          toast.error("Error al verificar sesión");
+          if (isMounted) {
+            setLoading(false);
+            setInitialized(true);
+          }
           return;
         }
-        
-        if (error) {
-          console.error('Error getting session:', error);
+
+        if (isMounted) {
+          setSession(session);
+          setUser(session?.user ?? null);
+          
+          if (session?.user) {
+            try {
+              await loadProfile(session.user.id);
+            } catch (err) {
+              console.error("Error cargando perfil:", err);
+              toast.error("Error al cargar el perfil");
+            }
+          } else {
+            setProfile(null);
+          }
+          
           setLoading(false);
           setInitialized(true);
-          return;
         }
-        
-        setSession(session);
-        setUser(session?.user ?? null);
-
-        if (session?.user) {
-          await loadProfile(session.user.id);
-        } else {
-          setProfile(null);
-        }
-      } catch (error) {
-        console.error('Error in getInitialSession:', error);
-      } finally {
+      } catch (err) {
+        console.error("Error inicializando auth:", err);
+        toast.error("Error en autenticación");
         if (isMounted) {
           setLoading(false);
           setInitialized(true);
         }
       }
-    }
-    
-    getInitialSession();
+    };
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Auth state changed:', event);
-        
-        if (!isMounted) {
-          return;
-        }
-        
-        try {
-          setSession(session);
-          setUser(session?.user ?? null);
-
-          if (session?.user) {
-            await loadProfile(session.user.id);
-          } else {
-            setProfile(null);
-          }
-        } catch (error) {
-          console.error('Error in auth state change:', error);
-        } finally {
+    // Configurar el listener de cambios de autenticación
+    const setupAuthListener = () => {
+      return supabase.auth.onAuthStateChange(
+        async (event, session) => {
+          console.log("Auth state changed:", event);
           if (isMounted) {
-            setLoading(false);
+            setSession(session);
+            setUser(session?.user ?? null);
+
+            if (session?.user) {
+              try {
+                await loadProfile(session.user.id);
+              } catch (err) {
+                console.error("Error cargando perfil en listener:", err);
+                toast.error("Error al cargar el perfil");
+              }
+            } else {
+              setProfile(null);
+            }
           }
         }
+      );
+    };
+
+    // Inicializar y configurar listener
+    init().then(() => {
+      if (isMounted) {
+        const { data } = setupAuthListener();
+        authListener = { data };
       }
-    )
+    });
 
     return () => {
       isMounted = false;
-      subscription?.unsubscribe();
+      if (authListener?.data?.subscription) {
+        authListener.data.subscription.unsubscribe();
+      }
     };
-  }, [])
+  }, []);
 
   const signUp = async (email: string, password: string, fullName: string) => {
     setLoading(true);
@@ -244,7 +258,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Redirigir a la página de verificación de correo
       window.location.href = '/verify-email';
-      
+
+      // Si ya tenemos user, forzar carga de perfil
+      if (data.user) {
+        await loadProfile(data.user.id, true);
+      }
+
       return data;
     } catch (error: any) {
       const errorMessage = error.message || 'Error al crear la cuenta. Por favor intenta de nuevo.';
@@ -277,18 +296,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signInWithGoogle = async (): Promise<{ provider: string; url: string } | void> => {
     try {
       setLoading(true);
-      
+
       // Guardar la ruta actual para redirigir después del inicio de sesión
       const currentPath = window.location.pathname;
       if (currentPath !== '/auth') {
         sessionStorage.setItem('preAuthPath', currentPath);
       }
-      
+
       console.log('Iniciando flujo de autenticación de Google...');
-      
+
       // Configurar la URL de redirección para después del inicio de sesión
       const redirectTo = `${window.location.origin}/dashboard`;
-      
+
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
@@ -301,22 +320,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           skipBrowserRedirect: false,
         },
       });
-      
+
       if (error) {
         console.error('Error en autenticación con Google:', error);
         throw error;
       }
-      
+
       console.log('Respuesta OAuth:', data);
-      
-      // Si tenemos una URL, retornarla (aunque con skipBrowserRedirect: false, Supabase manejará la redirección)
-      if (data?.url) {
-        console.log('Flujo OAuth iniciado, redirigiendo al proveedor...');
-        return data;
-      }
-      
-      return undefined;
-      
+      return data;
     } catch (error) {
       console.error('Error en signInWithGoogle:', error);
       toast.error('Error al iniciar sesión con Google');
@@ -343,35 +354,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }
 
-  const updateProfile = async (updates: Database['public']['Tables']['profiles']['Update']): Promise<void> => {
+  const updateProfile = async (updates: Partial<Database['public']['Tables']['profiles']['Update']>) => {
     if (!user) {
       toast.error('Usuario no autenticado');
       return;
     }
-  
+
     try {
-      // Hacemos la actualización usando una aserción de tipo más específica
-      const { error: updateError } = await (supabase as any)
+      const { error } = await (supabase as any)
         .from('profiles')
         .update(updates)
         .eq('id', user.id);
-      
-      if (updateError) throw updateError;
-      
-      // Luego obtenemos el perfil actualizado
+
+      if (error) throw error;
+
       const { data, error: fetchError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user.id)
-        .single<Profile>();
-      
+        .single();
+
       if (fetchError) throw fetchError;
-      
+
       setProfile(data);
+      localStorage.setItem(`profile_${user.id}`, JSON.stringify(data));
       toast.success('Perfil actualizado correctamente');
-    } catch (error) {
-      console.error('Error updating profile:', error);
-      toast.error(error instanceof Error ? error.message : 'Error al actualizar el perfil');
+    } catch (err) {
+      console.error('Error updating profile:', err);
+      toast.error(err instanceof Error ? err.message : 'Error al actualizar el perfil');
     }
   };
 

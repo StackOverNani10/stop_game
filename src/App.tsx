@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
-import { Toaster } from 'react-hot-toast'
-import { AuthProvider, useAuth } from './contexts/AuthContext'
-import { GameProvider } from './contexts/GameContext'
-import { supabase } from './lib/supabase'
-import { Layout } from './components/layout/Layout'
+import React, { Suspense, lazy, useEffect, useState } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Toaster } from 'react-hot-toast';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { GameProvider } from './contexts/GameContext';
+import { supabase } from './lib/supabase';
+import { Layout } from './components/layout/Layout';
+import LoadingScreen from './components/screen/LoadingScreen';
 import { Auth } from './pages/Auth'
 import { Dashboard } from './pages/Dashboard'
 import { Game } from './pages/Game'
@@ -14,49 +15,38 @@ import VerifyEmail from './pages/VerifyEmail'
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth()
-  
+
   if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 animate-pulse">
-            <span className="text-white font-bold text-2xl">S</span>
-          </div>
-          <p className="text-gray-600">Cargando...</p>
-        </div>
-      </div>
-    )
+    return <LoadingScreen message="Verificando autenticación..." />;
   }
-  
+
   return user ? <>{children}</> : <Navigate to="/auth" replace />
 }
 
 const AppRoutes: React.FC = () => {
-  const { user, loading } = useAuth()
-  
-  // Show loading state while checking auth
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 animate-pulse">
-            <span className="text-white font-bold text-2xl">S</span>
-          </div>
-          <p className="text-gray-600">Verificando autenticación...</p>
-        </div>
-      </div>
-    )
-  }
-  
+  const { user } = useAuth();
+
+  const withSuspense = (Component: React.ComponentType, message: string = 'Cargando contenido...') => (
+    <Suspense fallback={<LoadingScreen message={message} />}>
+      <Component />
+    </Suspense>
+  );
+
+  // No mostramos loading aquí para evitar doble pantalla de carga
+
   return (
     <Routes>
-      <Route 
-        path="/auth" 
-        element={user ? <Navigate to="/dashboard" replace /> : <Auth />} 
+      <Route
+        path="/auth"
+        element={
+          !user ?
+            withSuspense(Auth, 'Preparando el inicio de sesión...') :
+            <Navigate to="/" replace />
+        }
       />
-      <Route 
-        path="/verify-email" 
-        element={user ? <Navigate to="/dashboard" replace /> : <VerifyEmail />} 
+      <Route
+        path="/verify-email"
+        element={user ? <Navigate to="/dashboard" replace /> : <VerifyEmail />}
       />
       <Route
         path="/dashboard"
@@ -100,13 +90,13 @@ const AppRoutes: React.FC = () => {
       />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
     </Routes>
-  )
-}
+  );
+};
 
 function AppContent() {
   const { user, loading } = useAuth();
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
-  
+
   // Efecto para manejar la autenticación inicial
   useEffect(() => {
     // Verificar si es un callback de OAuth
@@ -116,16 +106,16 @@ function AppContent() {
         const urlParams = new URLSearchParams(window.location.search);
         const accessToken = urlParams.get('access_token');
         const refreshToken = urlParams.get('refresh_token');
-        
+
         if (accessToken || refreshToken) {
           // Si hay tokens en la URL, esperar a que Supabase procese la sesión
           console.log('Procesando callback de autenticación...');
           return;
         }
-        
+
         // Si no es un callback, verificar la sesión actual
         const { data: { session } } = await supabase.auth.getSession();
-        
+
         if (session) {
           // Si hay sesión, redirigir al dashboard si está en auth
           if (window.location.pathname === '/auth') {
@@ -145,18 +135,18 @@ function AppContent() {
         setIsCheckingAuth(false);
       }
     };
-    
+
     checkAuthStatus();
-    
+
     // Configurar listener de cambios de autenticación
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('Cambio en el estado de autenticación:', event);
-        
+
         if (event === 'SIGNED_IN' && session) {
           const preAuthPath = sessionStorage.getItem('preAuthPath') || '/dashboard';
           sessionStorage.removeItem('preAuthPath');
-          
+
           // Solo redirigir si está en la raíz o en auth
           if (['/', '/auth'].includes(window.location.pathname)) {
             window.location.href = preAuthPath;
@@ -169,26 +159,17 @@ function AppContent() {
         }
       }
     );
-    
+
     return () => {
       subscription?.unsubscribe();
     };
   }, []);
-  
+
   // Mostrar pantalla de carga solo durante la verificación inicial
-  if (loading || isCheckingAuth) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 animate-pulse">
-            <span className="text-white font-bold text-2xl">S</span>
-          </div>
-          <p className="text-gray-600">Verificando autenticación...</p>
-        </div>
-      </div>
-    );
+  if (isCheckingAuth) {
+    return <LoadingScreen message="Iniciando sesión..." />;
   }
-  
+
   // Main app content
   return (
     <div className="min-h-screen">

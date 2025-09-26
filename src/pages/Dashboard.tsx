@@ -1,44 +1,19 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Users, Trophy, Clock, Gamepad2, Star } from 'lucide-react'
+import { Plus, Users, Trophy, Gamepad2, Star } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { CreateGameModal } from '../components/game/CreateGameModal'
 import { useAuth } from '../contexts/AuthContext'
 import { useGame } from '../contexts/GameContext'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Navigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 
 export const Dashboard: React.FC = () => {
-  const { profile, loading: authLoading, user, session } = useAuth()
+  const { profile, loading: authLoading, user } = useAuth()
   const { createGame, gameLoading } = useGame()
   const navigate = useNavigate()
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [isInitialLoad, setIsInitialLoad] = useState(true)
-  const [profileLoaded, setProfileLoaded] = useState(false)
-
-  // Handle profile loaded state
-  useEffect(() => {
-    if (profile && user) {
-      setProfileLoaded(true);
-    }
-  }, [profile, user]);
-
-  // Handle authentication state and redirects
-  useEffect(() => {
-    if (authLoading) {
-      return;
-    }
-
-    if (!user) {
-      navigate('/auth');
-      return;
-    }
-
-    if (isInitialLoad) {
-      setIsInitialLoad(false);
-    }
-  }, [authLoading, user, navigate, isInitialLoad, profile]);
 
   const handleCreateGame = async (categoryIds: string[], maxRounds: number) => {
     try {
@@ -48,8 +23,25 @@ export const Dashboard: React.FC = () => {
       toast.success(`¡Partida creada! Código: ${gameCode}`)
     } catch (error) {
       console.error('Error creating game:', error)
-      toast.error('Error al crear la partida. Por favor intenta de nuevo.');
+      toast.error('Error al crear la partida. Por favor intenta de nuevo.')
     }
+  }
+
+  // Si aún está cargando la autenticación
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="mt-4 text-lg text-gray-700">Cargando tu perfil...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Si no hay usuario, redirigir a /auth
+  if (!user) {
+    return <Navigate to="/auth" replace />
   }
 
   const stats = [
@@ -74,28 +66,7 @@ export const Dashboard: React.FC = () => {
       color: 'text-purple-600',
       bg: 'bg-purple-100'
     }
-  ];
-
-  // Show loading state while checking auth, initial load, or waiting for profile
-  if (authLoading || isInitialLoad || !profileLoaded) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-          <p className="mt-4 text-lg text-gray-700">Cargando tu perfil...</p>
-          <p className="text-sm text-gray-500 mt-2">
-            {authLoading ? 'Verificando autenticación...' : 
-             !profileLoaded ? 'Cargando datos del perfil...' : 'Preparando el tablero...'}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // If no user but not loading, redirect should happen in the other effect
-  if (!user) {
-    return null;
-  }
+  ]
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -109,7 +80,7 @@ export const Dashboard: React.FC = () => {
           ¡Bienvenido a STOP! 🎯
         </h1>
         <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-          El clásico juego de palabras ahora online. Crea una partida, invita a tus amigos 
+          El clásico juego de palabras ahora online. Crea una partida, invita a tus amigos
           y demuestra quién tiene el vocabulario más rápido.
         </p>
       </motion.div>
@@ -137,11 +108,7 @@ export const Dashboard: React.FC = () => {
       {/* Main Actions */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
         {/* Create Game */}
-        <motion.div
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.3 }}
-        >
+        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 }}>
           <Card className="p-8 text-center h-full flex flex-col justify-center" hoverable>
             <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
               <Plus className="w-8 h-8 text-white" />
@@ -150,11 +117,7 @@ export const Dashboard: React.FC = () => {
             <p className="text-gray-600 mb-6 flex-1">
               Inicia una nueva partida, personaliza las categorías y invita a tus amigos a jugar.
             </p>
-            <Button
-              onClick={() => setShowCreateModal(true)}
-              size="lg"
-              className="w-full"
-            >
+            <Button onClick={() => setShowCreateModal(true)} size="lg" className="w-full">
               <Plus className="w-5 h-5 mr-2" />
               Nueva Partida
             </Button>
@@ -162,11 +125,7 @@ export const Dashboard: React.FC = () => {
         </motion.div>
 
         {/* Join Game */}
-        <motion.div
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.4 }}
-        >
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.4 }}>
           <Card className="p-8 text-center h-full flex flex-col justify-center" hoverable>
             <div className="w-16 h-16 bg-gradient-to-r from-green-500 to-teal-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
               <Users className="w-8 h-8 text-white" />
@@ -175,12 +134,7 @@ export const Dashboard: React.FC = () => {
             <p className="text-gray-600 mb-6 flex-1">
               ¿Tienes un código de partida? Únete a una partida existente y comienza a jugar.
             </p>
-            <Button
-              onClick={() => navigate('/join')}
-              variant="secondary"
-              size="lg"
-              className="w-full"
-            >
+            <Button onClick={() => navigate('/join')} variant="secondary" size="lg" className="w-full">
               <Users className="w-5 h-5 mr-2" />
               Unirse con Código
             </Button>
@@ -189,52 +143,28 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* How to Play */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5 }}
-      >
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
         <Card className="p-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">
-            ¿Cómo se juega?
-          </h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">¿Cómo se juega?</h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div className="text-center">
-              <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 font-bold text-lg">
-                1
+            {['Crear o Unirse', 'Letra Aleatoria', 'Completar Categorías', '¡STOP!'].map((title, i) => (
+              <div key={i} className="text-center">
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 font-bold text-lg 
+                  ${i === 0 ? 'bg-blue-100 text-blue-600' :
+                    i === 1 ? 'bg-green-100 text-green-600' :
+                      i === 2 ? 'bg-purple-100 text-purple-600' :
+                        'bg-yellow-100 text-yellow-600'}`}>
+                  {i + 1}
+                </div>
+                <h3 className="font-semibold text-gray-900 mb-2">{title}</h3>
+                <p className="text-sm text-gray-600">
+                  {i === 0 && 'Crea una nueva partida o únete con un código'}
+                  {i === 1 && 'Se elige una letra al azar para cada ronda'}
+                  {i === 2 && 'Escribe palabras que empiecen con esa letra'}
+                  {i === 3 && 'El primero en completar grita STOP y gana puntos'}
+                </p>
               </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Crear o Unirse</h3>
-              <p className="text-sm text-gray-600">
-                Crea una nueva partida o únete con un código
-              </p>
-            </div>
-            <div className="text-center">
-              <div className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4 font-bold text-lg">
-                2
-              </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Letra Aleatoria</h3>
-              <p className="text-sm text-gray-600">
-                Se elige una letra al azar para cada ronda
-              </p>
-            </div>
-            <div className="text-center">
-              <div className="w-12 h-12 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 font-bold text-lg">
-                3
-              </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Completar Categorías</h3>
-              <p className="text-sm text-gray-600">
-                Escribe palabras que empiecen con esa letra
-              </p>
-            </div>
-            <div className="text-center">
-              <div className="w-12 h-12 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-4 font-bold text-lg">
-                4
-              </div>
-              <h3 className="font-semibold text-gray-900 mb-2">¡STOP!</h3>
-              <p className="text-sm text-gray-600">
-                El primero en completar grita STOP y gana puntos
-              </p>
-            </div>
+            ))}
           </div>
         </Card>
       </motion.div>

@@ -5,6 +5,7 @@ type Schema = Database['public']
 
 export type Tables = Schema['Tables']
 export type TableName = keyof Tables
+export type Profile = Tables['profiles']['Row']
 
 type Table<T extends TableName> = Tables[T]
 type Row<T extends TableName> = Table<T>['Row']
@@ -68,7 +69,7 @@ export async function select<T extends TableName>(
   filter?: Record<string, any>
 ) {
   let query = supabase.from(table).select(columns);
-  
+
   if (filter) {
     Object.entries(filter).forEach(([key, value]) => {
       if (value !== undefined) {
@@ -76,6 +77,6 @@ export async function select<T extends TableName>(
       }
     });
   }
-  
+
   return query as any; // Type assertion to bypass type checking
 }
