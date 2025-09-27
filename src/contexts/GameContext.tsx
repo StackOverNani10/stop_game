@@ -1,13 +1,13 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { v4 as uuidv4 } from 'uuid'
+import toast from 'react-hot-toast'
 import { supabase, insert } from '../lib/supabase'
 import { useAuth } from './AuthContext'
 import { GameState, PlayerAnswers, LETTERS, PlayerData } from '../types/game';
-import { v4 as uuidv4 } from 'uuid'
-import toast from 'react-hot-toast'
+import { useCountdown } from '../hooks/useCountdown';
 
 // Interfaz para el perfil del jugador
 interface PlayerProfile {
-  id: string;
   full_name: string | null;
   avatar_url: string | null;
   email: string;
@@ -17,7 +17,7 @@ interface DatabaseGame {
   id: string
   code: string
   host_id: string
-  status: 'waiting' | 'playing' | 'finished'
+  status: 'waiting' | 'starting' | 'playing' | 'finished'
   current_round_number: number
   current_letter: string | null
   categories: string[]
@@ -26,6 +26,9 @@ interface DatabaseGame {
   stop_countdown: number
   created_at: string
   updated_at: string
+  // Campos para cuenta regresiva de inicio
+  starting_countdown?: number
+  is_starting?: boolean
 }
 
 interface GameCategory {
@@ -140,12 +143,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           filter: `game_id=eq.${currentGame.id}`
         },
         async (payload) => {
-          console.log('Cambio en jugadores:', payload);
-          // Forzar una recarga completa de los jugadores
-          await loadGamePlayers(currentGame.id);
+          // Recargar la lista de jugadores inmediatamente
+          if (currentGame.id) {
+            await loadGamePlayers(currentGame.id);
+          }
 
           // Mostrar notificación cuando un jugador nuevo se una
-          if (payload.eventType === 'INSERT') {
+          if (payload.eventType === 'INSERT' && payload.new) {
             const { data: playerProfile, error } = await supabase
               .from('profiles')
               .select('*')
@@ -159,8 +163,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
 
-          // Mostrar notificación cuando un jugador se retira
-          if (payload.eventType === 'DELETE') {
+          // Mostrar notificación cuando un jugador se retire
+          if (payload.eventType === 'DELETE' && payload.old) {
             const { data: playerProfile, error } = await supabase
               .from('profiles')
               .select('*')
@@ -175,6 +179,24 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       )
+      .on('broadcast', { event: 'player_left' }, (payload) => {
+        // Si el jugador que se va no soy yo, recargar la lista
+        if (payload.payload.player_id !== user?.id && payload.payload.game_id === currentGame?.id) {
+          loadGamePlayers(payload.payload.game_id);
+        }
+      })
+      .on('broadcast', { event: 'settings_updated' }, (payload) => {
+        // Si la actualización no viene de mí mismo, aplicar los cambios
+        if (payload.payload.game_id === currentGame?.id) {
+          setCurrentGame(prev => prev ? {
+            ...prev,
+            max_rounds: payload.payload.settings.max_rounds,
+            round_time_limit: payload.payload.settings.round_time_limit,
+            stop_countdown: payload.payload.settings.stop_countdown,
+            updated_at: new Date().toISOString()
+          } : null);
+        }
+      })
       .subscribe((status) => {
         console.log('Estado de la suscripción a jugadores:', status);
       });
@@ -198,9 +220,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setCurrentGame(prev => {
               if (!prev) return null;
 
+              // Si el juego está iniciando (waiting + starting_countdown)
+              if (payload.new.status === 'waiting' && payload.old?.status === 'waiting' && payload.new.starting_countdown) {
+                toast.success('¡Iniciando cuenta regresiva!', { duration: 2000 });
+                resetAnswers();
+              }
+
               // Si el juego acaba de comenzar
-              if (payload.new.status === 'playing' && prev.status === 'waiting') {
-                toast.success('¡La partida ha comenzado!');
+              if (payload.new.status === 'playing' && payload.old?.status === 'waiting') {
+                toast.success('¡El juego ha comenzado!', { duration: 3000 });
                 resetAnswers();
               }
 
@@ -242,26 +270,56 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       )
       .subscribe();
 
+    // Suscripción para eventos de countdown
+    const countdownChannel = supabase
+      .channel(`game_countdown_${currentGame.id}`)
+      .on('broadcast', { event: 'countdown_start' }, (payload) => {
+        console.log('Countdown started:', payload)
+        // Solo iniciar cuenta regresiva si no es el anfitrión quien la inició
+        if (payload.payload.game_id === currentGame.id && user?.id !== currentGame.host_id) {
+          const elapsed = Math.floor((Date.now() - payload.payload.timestamp) / 1000)
+          const countdownValue = Math.max(0, 10 - elapsed)
+
+          setCurrentGame(prev => prev ? {
+            ...prev,
+            starting_countdown: countdownValue,
+            updated_at: new Date().toISOString()
+          } : null)
+          toast.success('¡Iniciando cuenta regresiva!', { duration: 2000 })
+        }
+      })
+      .subscribe()
+
     // Limpieza al desmontar
     return () => {
-      console.log('Limpiando suscripciones');
-      supabase.removeChannel(playersSubscription);
-      supabase.removeChannel(gameSubscription);
-      supabase.removeChannel(answersSubscription);
+      console.log('Limpiando suscripciones')
+      supabase.removeChannel(playersSubscription)
+      supabase.removeChannel(gameSubscription)
+      supabase.removeChannel(answersSubscription)
+      supabase.removeChannel(countdownChannel)
     };
   }, [currentGame?.id])
 
   const handleGameUpdate = useCallback((payload: any) => {
     if (!payload.new) return;
 
-    setCurrentGame(prev => ({
-      ...(prev || {}),
-      ...payload.new,
-      // Make sure players array is preserved if not in the update
-      players: prev?.players || []
-    }));
+    setCurrentGame(prev => {
+      const newGame = {
+        ...(prev || {}),
+        ...payload.new,
+        // Make sure players array is preserved if not in the update
+        players: prev?.players || []
+      };
+
+      return newGame;
+    });
 
     // Handle different game states
+    if (payload.new.status === 'starting' && payload.old?.status === 'waiting') {
+      toast.success('¡Iniciando cuenta regresiva!', { duration: 2000 });
+      resetAnswers();
+    }
+
     if (payload.new.status === 'playing' && payload.old?.status === 'waiting') {
       toast.success('¡El juego ha comenzado!');
       resetAnswers();
@@ -271,13 +329,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toast.success(`Nueva letra: ${payload.new.current_letter}`);
       resetAnswers();
     }
-  }, [currentGame])
-
-  const handlePlayersUpdate = useCallback(async () => {
-    if (!currentGame?.id) return
-
-    // Reload players
-    await loadGamePlayers(currentGame.id)
   }, [currentGame?.id])
 
   const loadGamePlayers = async (gameId: string) => {
@@ -572,12 +623,17 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         toast.success('La partida ha sido eliminada');
       } else {
+        // Notificar a otros jugadores que este jugador se va
+        await notifyPlayerLeft();
+
         toast.success('Has salido de la partida');
       }
 
-      // Limpiar el estado local
-      setCurrentGame(null);
-      resetAnswers();
+      // Limpiar el estado local DESPUÉS de notificar a otros jugadores
+      setTimeout(() => {
+        setCurrentGame(null);
+        resetAnswers();
+      }, 100);
     } catch (error: any) {
       console.error('Error al salir del juego:', error);
       toast.error(error.message || 'Error al salir del juego');
@@ -622,6 +678,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw error;
       }
 
+      // Notificar a otros jugadores sobre la actualización de configuración
+      await notifyGameSettingsUpdate(settings);
+
       // Notificar al usuario
       toast.success('Configuración actualizada correctamente');
     } catch (error: any) {
@@ -631,21 +690,36 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const startGame = async () => {
+  // Hook para manejar la sincronización del countdown entre jugadores
+  const { notifyCountdownStartToOthers } = useCountdown({
+    gameId: currentGame?.id || '',
+    hostId: currentGame?.host_id || '',
+    userId: user?.id || '',
+    onCountdownEnd: () => {
+      // La cuenta regresiva terminó, iniciar el juego
+      startActualGame();
+    },
+    onCountdownUpdate: (countdown: number) => {
+      setCurrentGame(prev => prev ? {
+        ...prev,
+        starting_countdown: countdown,
+        updated_at: new Date().toISOString()
+      } : null);
+    }
+  });
+
+  // Función para iniciar la secuencia de cuenta regresiva
+  const startGameSequence = async () => {
     if (!currentGame || !user || currentGame.host_id !== user.id) return
 
     try {
-      const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)]
       const now = new Date().toISOString()
-      const currentRound = 1;
 
       // Actualizar el estado local inmediatamente para una mejor experiencia de usuario
       setCurrentGame(prev => prev ? {
         ...prev,
-        status: 'playing',
-        current_letter: randomLetter,
-        current_round: currentRound,
-        current_round_number: currentRound, // Mantener para compatibilidad con el código existente
+        status: 'waiting', // Mantener como waiting durante la cuenta regresiva
+        starting_countdown: 10,
         updated_at: now
       } : null)
 
@@ -653,9 +727,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { error } = await (supabase
         .from('games')
         .update as any)({
-          status: 'playing',
-          current_letter: randomLetter,
-          current_round: currentRound,
+          status: 'waiting', // Mantener como waiting en BD durante cuenta regresiva
           updated_at: now
         })
         .eq('id', currentGame.id)
@@ -664,17 +736,137 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Revertir el estado local si hay un error
         setCurrentGame(prev => prev ? {
           ...prev,
-          status: 'waiting',
-          current_letter: null,
-          current_round: 0
+          status: 'waiting'
         } : null)
         throw error
       }
 
-      // Notificar a los jugadores
-      toast.success('¡El juego ha comenzado!', { duration: 3000 })
+      // Mostrar notificación solo para el anfitrión
+      if (user?.id === currentGame.host_id) {
+        toast.success('¡Preparándose para iniciar el juego!', { duration: 3000 })
+      }
     } catch (error: any) {
-      console.error('Error starting game:', error)
+      console.error('Error starting game sequence:', error)
+      toast.error(error.message || 'Error al iniciar la cuenta regresiva')
+    }
+  }
+
+  // Función para notificar a otros jugadores sobre el inicio de cuenta regresiva
+  const notifyCountdownStart = async () => {
+    if (!currentGame) return
+
+    try {
+      const channel = supabase.channel(`game_countdown_${currentGame.id}`)
+      await channel.send({
+        type: 'broadcast',
+        event: 'countdown_start',
+        payload: {
+          game_id: currentGame.id,
+          starting_countdown: 10,
+          timestamp: Date.now()
+        }
+      })
+    } catch (error) {
+      console.error('Error al notificar inicio de countdown:', error)
+    }
+  }
+
+  // Función para notificar a otros jugadores que un usuario se va
+  const notifyPlayerLeft = async () => {
+    if (!currentGame || !user) return
+
+    try {
+      const channel = supabase.channel(`game_players_${currentGame.id}`)
+      await channel.send({
+        type: 'broadcast',
+        event: 'player_left',
+        payload: {
+          game_id: currentGame.id,
+          player_id: user.id,
+          timestamp: Date.now()
+        }
+      })
+    } catch (error) {
+      console.error('Error al notificar salida de usuario:', error)
+    }
+  }
+
+  // Función para notificar cambios en la configuración del juego
+  const notifyGameSettingsUpdate = async (settings: {
+    max_rounds: number;
+    round_time_limit: number;
+    stop_countdown: number;
+  }) => {
+    if (!currentGame) return
+
+    try {
+      const channel = supabase.channel(`game_players_${currentGame.id}`)
+      await channel.send({
+        type: 'broadcast',
+        event: 'settings_updated',
+        payload: {
+          game_id: currentGame.id,
+          settings: settings,
+          timestamp: Date.now()
+        }
+      })
+    } catch (error) {
+      console.error('Error al notificar actualización de configuración:', error)
+    }
+  }
+  // Función que realmente inicia el juego después de la cuenta regresiva
+  const startActualGame = async () => {
+    if (!currentGame || !user) return
+
+    try {
+      const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)]
+      const now = new Date().toISOString()
+      const currentRound = 1;
+      const gameId = currentGame.id;
+      const isHost = currentGame.host_id === user.id;
+
+      // Actualizar el estado local inmediatamente para una mejor experiencia de usuario
+      setCurrentGame(prev => prev ? {
+        ...prev,
+        status: 'playing',
+        starting_countdown: undefined,
+        current_letter: randomLetter,
+        current_round: currentRound,
+        current_round_number: currentRound,
+        updated_at: now
+      } : null)
+
+      // Si soy el anfitrión, actualizar también la base de datos
+      if (isHost) {
+        const { error } = await (supabase
+          .from('games')
+          .update as any)({
+            status: 'playing',
+            current_letter: randomLetter,
+            current_round: currentRound,
+            updated_at: now
+          })
+          .eq('id', gameId)
+
+        if (error) {
+          // Revertir el estado local si hay un error
+          setCurrentGame(prev => prev ? {
+            ...prev,
+            status: 'waiting',
+            starting_countdown: 10,
+            current_letter: null,
+            current_round: 0
+          } : null)
+          throw error
+        }
+      }
+
+      // Mostrar notificación (solo el anfitrión muestra el toast, otros lo reciben por suscripción)
+      if (isHost) {
+        toast.success('¡El juego ha comenzado!', { duration: 3000 })
+      }
+    } catch (error: any) {
+      console.error('Error starting actual game:', error)
       toast.error(error.message || 'Error al iniciar el juego')
     }
   }
@@ -686,9 +878,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      console.log('Submitting answers:', answers);
-      console.log('Current game round:', currentGame.current_round);
-
       // Verificar que tengamos respuestas para enviar
       if (Object.keys(answers).length === 0) {
         console.warn('No answers to submit');
@@ -699,15 +888,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const roundAnswers = Object.entries(answers).map(([category, answer]) => ({
         game_id: currentGame.id,
         player_id: user.id,
-        round_number: currentGame.current_round_number,  // Usar 'round_number' que es el nombre correcto en la base de datos
+        round_number: currentGame.current_round_number,
         category: category,
         answer: answer.trim(),
         points: 0,
         is_unique: false,
         created_at: new Date().toISOString()
       }));
-
-      console.log('Sending to database:', roundAnswers);
 
       // Intentar insertar las respuestas usando la función insert del helper
       const { data, error } = await insert('round_answers', roundAnswers);
@@ -717,25 +904,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error(`Database error: ${error.message}`);
       }
 
-      console.log('Insert successful, response:', data);
       toast.success('Respuestas enviadas');
     } catch (error: any) {
       console.error('Error submitting answers:', error);
       toast.error(error.message || 'Error al enviar respuestas');
-
-      // Intentar obtener más información sobre la estructura de la tabla
-      try {
-        const { data: columns, error: columnsError } = await supabase
-          .rpc('get_columns_info', { table_name: 'round_answers' });
-
-        if (!columnsError) {
-          console.log('Table columns:', columns);
-        } else {
-          console.error('Error getting table info:', columnsError);
-        }
-      } catch (e) {
-        console.error('Could not retrieve table info:', e);
-      }
     }
   }
 
@@ -758,8 +930,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toast.error('Error al llamar STOP')
     }
   }
-
-  // Type-safe update function for game_players
   const updateGamePlayer = async (gameId: string, playerId: string, isReady: boolean) => {
     // Use the HTTP API directly as a workaround for type issues
     const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/game_players?game_id=eq.${gameId}&player_id=eq.${playerId}`, {
@@ -802,6 +972,21 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const resetAnswers = () => {
     setPlayerAnswers({})
+  }
+
+  const startGame = async () => {
+    if (!currentGame || !user || currentGame.host_id !== user.id) return
+
+    try {
+      // Iniciar la secuencia de cuenta regresiva
+      await startGameSequence()
+
+      // Notificar a otros jugadores que debe iniciar la cuenta regresiva
+      await notifyCountdownStartToOthers()
+    } catch (error: any) {
+      console.error('Error starting game:', error)
+      toast.error(error.message || 'Error al iniciar el juego')
+    }
   }
 
   const value: GameContextType = {

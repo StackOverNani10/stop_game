@@ -81,6 +81,17 @@ export const GamePlay: React.FC = () => {
     }
   }
 
+  // Handle game starting countdown
+  useEffect(() => {
+    if (currentGame?.status === 'waiting' && currentGame?.starting_countdown) {
+      const countdown = setInterval(() => {
+        // This would be handled by the real-time subscription
+      }, 1000)
+
+      return () => clearInterval(countdown)
+    }
+  }, [currentGame?.status, currentGame?.starting_countdown])
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
@@ -98,6 +109,37 @@ export const GamePlay: React.FC = () => {
   const progressPercentage = totalCategories > 0 ? (completedAnswers / totalCategories) * 100 : 0
 
   if (!currentGame) return null
+
+  // Mostrar cuenta regresiva de inicio si el juego está iniciando (waiting + starting_countdown)
+  if (currentGame.status === 'waiting' && currentGame.starting_countdown) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center"
+        >
+          <div className="mb-8">
+            <motion.div
+              animate={{ scale: [1, 1.1, 1] }}
+              transition={{ duration: 1, repeat: Infinity, repeatType: "reverse" }}
+              className="w-32 h-32 mx-auto mb-6 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center"
+            >
+              <span className="text-white font-bold text-6xl">
+                {currentGame.starting_countdown}
+              </span>
+            </motion.div>
+            <h1 className="text-4xl font-bold text-gray-900 mb-4">
+              ¡El juego está por comenzar!
+            </h1>
+            <p className="text-xl text-gray-600">
+              Preparándote para la primera ronda...
+            </p>
+          </div>
+        </motion.div>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-4xl mx-auto p-6">

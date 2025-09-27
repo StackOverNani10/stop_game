@@ -56,6 +56,37 @@ export const GameLobby: React.FC = () => {
   const gameUrl = `${window.location.origin}/join/${currentGame.code}`
   const allPlayersReady = currentGame.players.length > 1 && currentGame.players.every(p => p.is_ready)
 
+  // Si el juego está iniciando (waiting + starting_countdown), mostrar estado especial
+  if (currentGame.status === 'waiting' && currentGame.starting_countdown) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center"
+        >
+          <div className="mb-8">
+            <motion.div
+              animate={{ scale: [1, 1.1, 1] }}
+              transition={{ duration: 1, repeat: Infinity, repeatType: "reverse" }}
+              className="w-32 h-32 mx-auto mb-6 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center"
+            >
+              <span className="text-white font-bold text-6xl">
+                {currentGame.starting_countdown}
+              </span>
+            </motion.div>
+            <h1 className="text-4xl font-bold text-gray-900 mb-4">
+              ¡El juego está por comenzar!
+            </h1>
+            <p className="text-xl text-gray-600">
+              Preparándote para la primera ronda...
+            </p>
+          </div>
+        </motion.div>
+      </div>
+    )
+  }
+
   const handleShareClick = () => {
     setShowShareDialog(true)
   }
