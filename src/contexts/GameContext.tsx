@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
 import { supabase, insert } from '../lib/supabase'
-import type { Database } from '../types/database.types'
 import { useAuth } from './AuthContext'
-import { GameState, PlayerAnswers, RoundResults, LETTERS, PlayerData } from '../types/game';
+import { GameState, PlayerAnswers, LETTERS, PlayerData } from '../types/game';
+import { v4 as uuidv4 } from 'uuid'
+import toast from 'react-hot-toast'
 
 // Interfaz para el perfil del jugador
 interface PlayerProfile {
@@ -11,6 +12,7 @@ interface PlayerProfile {
   avatar_url: string | null;
   email: string;
 }
+
 interface DatabaseGame {
   id: string
   code: string
@@ -25,15 +27,6 @@ interface DatabaseGame {
   created_at: string
   updated_at: string
 }
-
-interface GameData {
-  id: string;
-  status: 'waiting' | 'playing' | 'finished';
-  code: string;
-  host_id: string;
-}
-import { v4 as uuidv4 } from 'uuid'
-import toast from 'react-hot-toast'
 
 interface GameCategory {
   id: string;
@@ -95,20 +88,20 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     console.log('Cargando categorías...');
     try {
       setCategoriesLoading(true);
-      
+
       // Limpiar categorías existentes
       setAvailableCategories([]);
-      
+
       const { data, error } = await supabase
         .from('categories')
         .select('*')
         .order('name', { ascending: true });
-      
+
       if (error) {
         console.error('Error en la consulta de categorías:', error);
         throw error;
       }
-      
+
       if (data && data.length > 0) {
         console.log(`Categorías cargadas: ${data.length}`);
         setAvailableCategories(data);
@@ -150,7 +143,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.log('Cambio en jugadores:', payload);
           // Forzar una recarga completa de los jugadores
           await loadGamePlayers(currentGame.id);
-          
+
           // Mostrar notificación cuando un jugador nuevo se una
           if (payload.eventType === 'INSERT') {
             const { data: playerProfile, error } = await supabase
@@ -158,9 +151,24 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               .select('*')
               .eq('id', payload.new.player_id)
               .single<PlayerProfile>();
-              
+
             if (playerProfile && !error) {
               toast.success(`${playerProfile.full_name || 'Un jugador'} se ha unido al juego`);
+            } else if (error) {
+              console.error('Error al cargar el perfil del jugador:', error);
+            }
+          }
+
+          // Mostrar notificación cuando un jugador se retira
+          if (payload.eventType === 'DELETE') {
+            const { data: playerProfile, error } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', payload.old.player_id)
+              .single<PlayerProfile>();
+
+            if (playerProfile && !error) {
+              toast.success(`${playerProfile.full_name || 'Un jugador'} salió del juego 👋`);
             } else if (error) {
               console.error('Error al cargar el perfil del jugador:', error);
             }
@@ -184,25 +192,31 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         },
         async (payload) => {
           console.log('Cambio en el estado del juego:', payload);
-          
+
           if (payload.eventType === 'UPDATE') {
             // Actualizar el estado local del juego
             setCurrentGame(prev => {
               if (!prev) return null;
-              
+
               // Si el juego acaba de comenzar
               if (payload.new.status === 'playing' && prev.status === 'waiting') {
                 toast.success('¡La partida ha comenzado!');
                 resetAnswers();
               }
-              
+
               // Si el juego ha terminado
               if (payload.new.status === 'finished' && prev.status !== 'finished') {
                 toast('La partida ha terminado', { icon: '🏁' });
               }
-              
+
               return { ...prev, ...payload.new };
             });
+          }
+
+          // Mostrar notificación cuando el juego se ha eliminado
+          if (payload.eventType === 'DELETE') {
+            toast.error('La partida fue eliminada por el anfitrión');
+            setCurrentGame(null);
           }
         }
       )
@@ -239,20 +253,20 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const handleGameUpdate = useCallback((payload: any) => {
     if (!payload.new) return;
-    
+
     setCurrentGame(prev => ({
       ...(prev || {}),
       ...payload.new,
       // Make sure players array is preserved if not in the update
       players: prev?.players || []
     }));
-    
+
     // Handle different game states
     if (payload.new.status === 'playing' && payload.old?.status === 'waiting') {
       toast.success('¡El juego ha comenzado!');
       resetAnswers();
     }
-    
+
     if (payload.new.current_letter && payload.new.current_letter !== payload.old?.current_letter) {
       toast.success(`Nueva letra: ${payload.new.current_letter}`);
       resetAnswers();
@@ -261,7 +275,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const handlePlayersUpdate = useCallback(async () => {
     if (!currentGame?.id) return
-    
+
     // Reload players
     await loadGamePlayers(currentGame.id)
   }, [currentGame?.id])
@@ -283,14 +297,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setCurrentGame(prev => prev ? {
         ...prev,
-        players: playersData.map(player => ({
+        players: [...playersData.map(player => ({
           id: player.id,
           player_id: player.player_id,
           profile: player.profile,
           score: player.score,
           is_ready: player.is_ready,
           joined_at: player.joined_at
-        }))
+        }))]
       } : null)
     } catch (error) {
       console.error('Error loading players:', error)
@@ -305,7 +319,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Verificar que el usuario esté autenticado
     const currentUser = user;
     if (!currentUser) throw new Error('User not authenticated');
-    
+
     setGameLoading(true);
     try {
       const gameCode = generateGameCode();
@@ -328,19 +342,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
 
       console.log('Creating game with data:', minimalGameData);
-      
+
       // Insertar el juego con solo los campos mínimos
       const { error } = await supabase
         .from('games')
         .insert([minimalGameData] as any);
-      
+
       if (error) {
         console.error('Error creating game:', error);
         throw new Error(`No se pudo crear la partida: ${error.message}`);
       }
-      
+
       console.log('Game created successfully');
-      
+
       // 2. Guardar las categorías en la tabla game_categories
       const categoriesToInsert = categories.map(category => ({
         game_id: gameId,
@@ -373,7 +387,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Error joining game as host:', playerError);
         throw new Error('No se pudo unir a la partida como anfitrión');
       }
-      
+
       // 4. Crear un objeto de juego local con todos los campos necesarios
       const localGameState: GameState = {
         ...minimalGameData,
@@ -394,13 +408,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         ]
       };
-      
+
       // 5. Actualizar el estado local
       setCurrentGame(localGameState);
-      
+
       // 6. Cargar el juego completo
       await joinGameById(gameId);
-      
+
       // 7. Retornar el código del juego para la navegación
       return gameCode;
     } catch (error: any) {
@@ -413,7 +427,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const joinGame = async (code: string) => {
     if (!user) throw new Error('User not authenticated')
-    
+
     setGameLoading(true)
     try {
       // 1. Buscar el juego por código
@@ -430,14 +444,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // 2. Obtener las categorías del juego
       const gameId = (gameData as any).id;
-      
+
       const { data: categoriesData, error: categoriesError } = await supabase
         .from('game_categories')
         .select('*')
         .eq('game_id', gameId) as { data: GameCategory[] | null; error: any };
-      
-      const categories = categoriesError || !categoriesData 
-        ? [] 
+
+      const categories = categoriesError || !categoriesData
+        ? []
         : categoriesData.map(cat => cat.category_id);
 
       // 3. Verificar si el usuario ya está unido al juego
@@ -463,7 +477,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // 4. Cargar el juego completo con jugadores y categorías
       await joinGameById(gameId, categories);
-      
+
       // 5. Retornar el código del juego para la navegación
       return code.toUpperCase();
     } catch (error: any) {
@@ -493,7 +507,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .from('game_categories')
           .select('*')
           .eq('game_id', gameId) as { data: GameCategory[] | null };
-        
+
         if (categoriesData) {
           categoriesToUse = categoriesData.map(cat => cat.category_id);
         }
@@ -520,7 +534,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       // Verificar si el usuario es el anfitrión
       const isHost = currentGame.host_id === user.id;
-      
+
       // Eliminar al jugador de la partida
       const { error: playerError } = await supabase
         .from('game_players')
@@ -555,7 +569,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .eq('id', currentGame.id);
 
         if (deleteGameError) throw deleteGameError;
-        
+
         toast.success('La partida ha sido eliminada');
       } else {
         toast.success('Has salido de la partida');
@@ -579,7 +593,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       const now = new Date().toISOString();
-      
+
       // Actualizar el estado local inmediatamente para una mejor experiencia de usuario
       setCurrentGame(prev => prev ? {
         ...prev,
@@ -674,7 +688,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       console.log('Submitting answers:', answers);
       console.log('Current game round:', currentGame.current_round);
-      
+
       // Verificar que tengamos respuestas para enviar
       if (Object.keys(answers).length === 0) {
         console.warn('No answers to submit');
@@ -694,7 +708,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }));
 
       console.log('Sending to database:', roundAnswers);
-      
+
       // Intentar insertar las respuestas usando la función insert del helper
       const { data, error } = await insert('round_answers', roundAnswers);
 
@@ -708,12 +722,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error: any) {
       console.error('Error submitting answers:', error);
       toast.error(error.message || 'Error al enviar respuestas');
-      
+
       // Intentar obtener más información sobre la estructura de la tabla
       try {
         const { data: columns, error: columnsError } = await supabase
           .rpc('get_columns_info', { table_name: 'round_answers' });
-          
+
         if (!columnsError) {
           console.log('Table columns:', columns);
         } else {
@@ -730,14 +744,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       // Update local state to show stop countdown
-      setCurrentGame(prev => prev ? { 
-        ...prev, 
-        stop_countdown: 10 
+      setCurrentGame(prev => prev ? {
+        ...prev,
+        stop_countdown: 10
       } : null);
 
       // If you need to notify other players, consider using Supabase Realtime
       // or another method that doesn't require a database schema change
-      
+
       toast.success('¡STOP! 10 segundos para terminar')
     } catch (error: any) {
       console.error('Error calling STOP:', error);
