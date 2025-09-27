@@ -28,7 +28,16 @@ interface DatabaseGame {
   updated_at: string
   // Campos para cuenta regresiva de inicio
   starting_countdown?: number
-  is_starting?: boolean
+}
+
+interface ActivePlayerWithGame {
+  id: string
+  game_id: string
+  player_id: string
+  is_ready: boolean
+  score: number
+  joined_at: string
+  game: DatabaseGame
 }
 
 interface GameCategory {
@@ -59,6 +68,7 @@ interface GameContextType {
   updateAnswer: (category: string, answer: string) => void
   resetAnswers: () => void
   loadCategories: () => Promise<void>
+  checkActiveGame: () => Promise<DatabaseGame | null>
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined)
@@ -124,6 +134,52 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     loadCategories();
   }, [loadCategories]);
+
+  // Función para actualizar el tiempo restante de la ronda
+  const updateRoundTimeRemaining = useCallback(async () => {
+    if (!currentGame || currentGame.status !== 'playing' || !currentGame.updated_at) return
+
+    // ✅ NO actualizar tiempo si hay STOP activo
+    if (currentGame.stop_countdown && currentGame.stop_countdown > 0) {
+      return // Salir temprano si hay STOP activo
+    }
+
+    const gameStartTime = new Date(currentGame.updated_at).getTime()
+    const now = Date.now()
+    const elapsed = Math.floor((now - gameStartTime) / 1000)
+    const remaining = Math.max(0, currentGame.round_time_limit - elapsed)
+
+    if (remaining !== currentGame.round_time_remaining) {
+      setCurrentGame(prev => prev ? {
+        ...prev,
+        round_time_remaining: remaining
+      } : null)
+
+      // Notificar a otros jugadores sobre el tiempo restante actualizado
+      try {
+        const channel = supabase.channel(`game_round_timer_${currentGame.id}`)
+        await channel.send({
+          type: 'broadcast',
+          event: 'round_time_update',
+          payload: {
+            game_id: currentGame.id,
+            round_time_remaining: remaining,
+            timestamp: Date.now()
+          }
+        })
+      } catch (error) {
+        console.error('Error notifying round time update:', error)
+      }
+    }
+  }, [currentGame])
+
+  // Efecto para actualizar el tiempo restante cada segundo
+  useEffect(() => {
+    if (!currentGame || currentGame.status !== 'playing') return
+
+    const interval = setInterval(updateRoundTimeRemaining, 1000)
+    return () => clearInterval(interval)
+  }, [currentGame, updateRoundTimeRemaining])
 
   // Efecto para manejar suscripciones en tiempo real
   useEffect(() => {
@@ -198,12 +254,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       })
       .subscribe((status) => {
-        console.log('Estado de la suscripción a jugadores:', status);
+        console.log(`Estado de la suscripción al juego ${currentGame?.id}:`, status);
       });
 
     // Suscripción a cambios en el estado del juego
     const gameSubscription = supabase
-      .channel(`game_state_${currentGame.id}`)
+      .channel(`game_state_${currentGame?.id}`)
       .on(
         'postgres_changes',
         {
@@ -248,9 +304,25 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       )
-      .subscribe((status) => {
-        console.log('Estado de la suscripción al juego:', status);
-      });
+      .on('broadcast', { event: 'game_started' }, (payload) => {
+        console.log('🎉 Game started broadcast received:', payload)
+        if (payload.payload.game_id === currentGame.id) {
+          console.log('✅ Actualizando estado del juego para:', payload.payload.game_id)
+          // Actualizar el estado local del juego
+          setCurrentGame(prev => prev ? {
+            ...prev,
+            status: payload.payload.status,
+            current_letter: payload.payload.current_letter,
+            current_round: payload.payload.current_round,
+            current_round_number: payload.payload.current_round,
+            updated_at: new Date().toISOString(),
+            round_time_remaining: prev.round_time_limit
+          } : null)
+
+          toast.success('¡El juego ha comenzado!', { duration: 3000 })
+          resetAnswers()
+        }
+      })
 
     // Suscripción a cambios en las respuestas de los jugadores
     const answersSubscription = supabase
@@ -288,6 +360,79 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           toast.success('¡Iniciando cuenta regresiva!', { duration: 2000 })
         }
       })
+      .on('broadcast', { event: 'game_started' }, (payload) => {
+        console.log('🎉 Game started broadcast received:', payload)
+        if (payload.payload.game_id === currentGame.id) {
+          console.log('✅ Actualizando estado del juego para:', payload.payload.game_id)
+          // Actualizar el estado local del juego
+          setCurrentGame(prev => prev ? {
+            ...prev,
+            status: payload.payload.status,
+            current_letter: payload.payload.current_letter,
+            current_round: payload.payload.current_round,
+            current_round_number: payload.payload.current_round,
+            updated_at: new Date().toISOString(),
+            round_time_remaining: prev.round_time_limit
+          } : null)
+
+          toast.success('¡El juego ha comenzado!', { duration: 3000 })
+          resetAnswers()
+        }
+      })
+      .subscribe((status) => {
+        console.log(`Estado de la suscripción countdown ${currentGame?.id}:`, status);
+      });
+
+    // Suscripción para eventos de jugadores (STOP, configuración, etc.)
+    const playersChannel = supabase
+      .channel(`game_players_${currentGame.id}`)
+      .on('broadcast', { event: 'stop_called' }, (payload) => {
+        if (payload.payload.game_id === currentGame.id) {
+          const stopCountdown = payload.payload.stop_countdown
+          const newTimeRemaining = payload.payload.round_time_remaining
+          const currentTimeRemaining = currentGame?.round_time_remaining || stopCountdown
+
+          // ✅ Usar el valor que viene del payload (ya calculado correctamente)
+          setCurrentGame(prev => prev ? {
+            ...prev,
+            stop_countdown: stopCountdown,
+            round_time_remaining: newTimeRemaining
+          } : null)
+
+          toast.success(`¡STOP! ${newTimeRemaining} segundos para terminar`)
+        }
+      })
+      .on('broadcast', { event: 'settings_updated' }, (payload) => {
+        if (payload.payload.game_id === currentGame.id) {
+          const settings = payload.payload.settings
+
+          setCurrentGame(prev => prev ? {
+            ...prev,
+            ...settings,
+            updated_at: new Date().toISOString()
+          } : null)
+
+          toast.success('Configuración del juego actualizada')
+        }
+      })
+      .subscribe()
+
+    // Suscripción para eventos de tiempo restante de ronda
+    const roundTimerChannel = supabase
+      .channel(`game_round_timer_${currentGame.id}`)
+      .on('broadcast', { event: 'round_time_update' }, (payload) => {
+        if (payload.payload.game_id === currentGame.id) {
+          // ✅ NO actualizar si hay STOP activo
+          if (currentGame?.stop_countdown && currentGame.stop_countdown > 0) {
+            return // Ignorar actualizaciones de tiempo si hay STOP activo
+          }
+
+          setCurrentGame(prev => prev ? {
+            ...prev,
+            round_time_remaining: payload.payload.round_time_remaining
+          } : null)
+        }
+      })
       .subscribe()
 
     // Limpieza al desmontar
@@ -297,6 +442,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       supabase.removeChannel(gameSubscription)
       supabase.removeChannel(answersSubscription)
       supabase.removeChannel(countdownChannel)
+      supabase.removeChannel(playersChannel)
+      supabase.removeChannel(roundTimerChannel)
     };
   }, [currentGame?.id])
 
@@ -330,6 +477,49 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       resetAnswers();
     }
   }, [currentGame?.id])
+
+  // Efecto para manejar polling del estado del juego (fallback si Realtime falla)
+  useEffect(() => {
+    if (!currentGame || currentGame.status !== 'waiting' || !currentGame.starting_countdown) return
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const { data: gameData, error } = await supabase
+          .from('games')
+          .select('*')
+          .eq('id', currentGame.id)
+          .single<DatabaseGame>()
+
+        if (error) {
+          console.error('Error polling game state:', error)
+          return
+        }
+
+        if (gameData && gameData.status === 'playing' && gameData.current_letter) {
+          // Actualizar el estado local del juego
+          setCurrentGame(prev => prev ? {
+            ...prev,
+            ...gameData,
+            categories: prev.categories, // Preservar categorías
+            players: prev.players, // Preservar jugadores
+            // ✅ NO revertir round_time_remaining si hay STOP activo
+            round_time_remaining: (gameData as any).round_time_remaining || prev.round_time_limit
+          } : null)
+
+          toast.success('¡El juego ha comenzado!', { duration: 3000 })
+          resetAnswers()
+
+          clearInterval(pollInterval)
+        }
+      } catch (error) {
+        console.error('Error in polling:', error)
+      }
+    }, 1000) // Verificar cada segundo
+
+    return () => {
+      clearInterval(pollInterval)
+    }
+  }, [currentGame?.id, currentGame?.status, currentGame?.starting_countdown])
 
   const loadGamePlayers = async (gameId: string) => {
     try {
@@ -366,6 +556,45 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return Math.random().toString(36).substring(2, 8).toUpperCase()
   }
 
+  const checkActiveGame = async () => {
+    if (!user) return null;
+
+    try {
+      // Buscar si el usuario está participando en algún juego activo
+      const { data: activePlayer, error } = await supabase
+        .from('game_players')
+        .select(`
+          *,
+          game:games(*)
+        `)
+        .eq('player_id', user.id)
+        .single() as { data: ActivePlayerWithGame | null; error: any };
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error checking active game:', error);
+        return null;
+      }
+
+      if (activePlayer?.game) {
+        const game = activePlayer.game;
+
+        // Solo reconectar si el juego está activo (waiting, starting, playing)
+        if (['waiting', 'starting', 'playing'].includes(game.status)) {
+          console.log('Found active game, reconnecting:', game.id);
+
+          // Cargar el juego completo
+          await joinGameById(game.id);
+          return game;
+        }
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error checking active game:', error);
+      return null;
+    }
+  };
+
   const createGame = async (categories: string[], maxRounds: number): Promise<string> => {
     // Verificar que el usuario esté autenticado
     const currentUser = user;
@@ -389,7 +618,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         current_letter: null,
         max_rounds: maxRounds,
         round_time_limit: 120,
-        stop_countdown: 10
+        stop_countdown: 0
       };
 
       console.log('Creating game with data:', minimalGameData);
@@ -564,12 +793,35 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
+      // Calcular tiempo restante de la ronda si el juego está jugando
+      let roundTimeRemaining = undefined;
+      if (gameData.status === 'playing' && gameData.updated_at) {
+        // ✅ NO usar stop_countdown para determinar el tiempo restante
+        // ✅ Siempre calcular basado en tiempo transcurrido desde que empezó el juego
+        const gameStartTime = new Date(gameData.updated_at).getTime();
+        const now = Date.now();
+        const elapsed = Math.floor((now - gameStartTime) / 1000);
+        roundTimeRemaining = Math.max(0, gameData.round_time_limit - elapsed);
+
+        console.log('⏰ Cálculo de tiempo restante:', {
+          gameStartTime: gameData.updated_at,
+          now: new Date().toISOString(),
+          elapsed,
+          roundTimeLimit: gameData.round_time_limit,
+          roundTimeRemaining,
+          stopCountdown: gameData.stop_countdown,
+          roundTimeRemainingFromDB: (gameData as any).round_time_remaining
+        });
+      }
+
       setCurrentGame({
         ...gameData,
         categories: categoriesToUse,
         players: [],
         stop_countdown: gameData.stop_countdown || 0,
-        current_round_number: gameData.current_round_number || 0 // Asegurar que current_round_number esté definido
+        current_round_number: gameData.current_round_number || 0,
+        // ✅ Mantener round_time_remaining si existe, sino calcularlo
+        round_time_remaining: (gameData as any).round_time_remaining || roundTimeRemaining
       });
 
       await loadGamePlayers(gameId);
@@ -819,11 +1071,20 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!currentGame || !user) return
 
     try {
-      const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)]
       const now = new Date().toISOString()
       const currentRound = 1;
       const gameId = currentGame.id;
       const isHost = currentGame.host_id === user.id;
+
+      let randomLetter: string;
+
+      // Solo el anfitrión genera la letra
+      if (isHost) {
+        randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)]
+      } else {
+        // Los otros jugadores esperan la letra del anfitrión
+        return // Salir temprano, la sincronización vendrá por suscripción
+      }
 
       // Actualizar el estado local inmediatamente para una mejor experiencia de usuario
       setCurrentGame(prev => prev ? {
@@ -833,7 +1094,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         current_letter: randomLetter,
         current_round: currentRound,
         current_round_number: currentRound,
-        updated_at: now
+        updated_at: now,
+        round_time_remaining: prev.round_time_limit // Inicializar tiempo de ronda
       } : null)
 
       // Si soy el anfitrión, actualizar también la base de datos
@@ -849,6 +1111,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .eq('id', gameId)
 
         if (error) {
+          console.error('Error actualizando BD:', error)
           // Revertir el estado local si hay un error
           setCurrentGame(prev => prev ? {
             ...prev,
@@ -858,6 +1121,30 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             current_round: 0
           } : null)
           throw error
+        }
+
+        // Notificar manualmente a todos los jugadores sobre el inicio del juego
+        try {
+          // Usar el mismo canal que ya funciona para countdown
+          const channel = supabase.channel(`game_countdown_${gameId}`)
+
+          // Pequeño retardo para asegurar que todos estén suscritos
+          await new Promise(resolve => setTimeout(resolve, 500))
+
+          await channel.send({
+            type: 'broadcast',
+            event: 'game_started',
+            payload: {
+              game_id: gameId,
+              status: 'playing',
+              current_letter: randomLetter,
+              current_round: currentRound,
+              timestamp: Date.now()
+            }
+          })
+        } catch (broadcastError) {
+          console.error('Error broadcasting game start:', broadcastError)
+          // No fallar si el broadcast falla, la BD ya está actualizada
         }
       }
 
@@ -878,6 +1165,20 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
+      // Verificar que no haya respuestas ya enviadas para esta ronda
+      const { data: existingAnswers } = await supabase
+        .from('round_answers')
+        .select('id')
+        .eq('game_id', currentGame.id)
+        .eq('player_id', user.id)
+        .eq('round_number', currentGame.current_round_number)
+        .limit(1)
+
+      if (existingAnswers && existingAnswers.length > 0) {
+        console.log('Respuestas ya enviadas para esta ronda')
+        return
+      }
+
       // Verificar que tengamos respuestas para enviar
       if (Object.keys(answers).length === 0) {
         console.warn('No answers to submit');
@@ -908,6 +1209,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error: any) {
       console.error('Error submitting answers:', error);
       toast.error(error.message || 'Error al enviar respuestas');
+      throw error; // Re-throw to allow component-level handling
     }
   }
 
@@ -915,16 +1217,70 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!currentGame || !user) return
 
     try {
+      const stopCountdownValue = currentGame.stop_countdown || 10 // Valor configurado
+      const currentTimeRemaining = currentGame.round_time_remaining || stopCountdownValue
+
+      // ✅ Verificar si ya hay un STOP activo
+      const isStopActive = currentGame.stop_countdown > 0 &&
+                          currentGame.round_time_remaining === currentGame.stop_countdown
+
+      if (isStopActive) {
+        // ✅ Si ya hay STOP activo, solo enviar respuestas (no cambiar tiempo)
+        console.log('STOP ya activo, enviando respuestas sin cambiar tiempo')
+        toast.success('¡Enviando respuestas!')
+        return // Salir sin cambiar el tiempo
+      }
+
+      // ✅ Validar: Solo permitir STOP si stop_countdown < tiempo restante actual
+      if (stopCountdownValue >= currentTimeRemaining) {
+        toast.error(`No puedes llamar STOP. El countdown configurado (${stopCountdownValue}s) es mayor o igual al tiempo restante (${currentTimeRemaining}s)`)
+        return
+      }
+
+      // ✅ Usar stop_countdown como nuevo tiempo restante
+      const newTimeRemaining = stopCountdownValue
+
       // Update local state to show stop countdown
       setCurrentGame(prev => prev ? {
         ...prev,
-        stop_countdown: 10
+        stop_countdown: stopCountdownValue,
+        round_time_remaining: newTimeRemaining
       } : null);
 
-      // If you need to notify other players, consider using Supabase Realtime
-      // or another method that doesn't require a database schema change
+      // Update database so all players see the STOP countdown
+      const { error } = await (supabase
+        .from('games')
+        .update as any)({
+          stop_countdown: stopCountdownValue,
+          round_time_remaining: newTimeRemaining, // ✅ Usar stop_countdown como tiempo restante
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', currentGame.id)
 
-      toast.success('¡STOP! 10 segundos para terminar')
+      if (error) {
+        console.error('Error updating stop countdown in database:', error)
+        // Don't throw error, continue with local state
+      }
+
+      // Notify other players about the STOP
+      try {
+        const channel = supabase.channel(`game_players_${currentGame.id}`)
+        await channel.send({
+          type: 'broadcast',
+          event: 'stop_called',
+          payload: {
+            game_id: currentGame.id,
+            stop_countdown: stopCountdownValue,
+            round_time_remaining: newTimeRemaining, // ✅ Usar stop_countdown como tiempo restante
+            timestamp: Date.now()
+          }
+        })
+      } catch (broadcastError) {
+        console.error('Error broadcasting stop call:', broadcastError)
+        // Don't fail if broadcast fails, the database update is more important
+      }
+
+      toast.success(`¡STOP! ${newTimeRemaining} segundos para terminar`)
     } catch (error: any) {
       console.error('Error calling STOP:', error);
       toast.error('Error al llamar STOP')
@@ -1005,7 +1361,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setPlayerReady,
     updateAnswer,
     resetAnswers,
-    loadCategories
+    loadCategories,
+    checkActiveGame
   };
 
   return (

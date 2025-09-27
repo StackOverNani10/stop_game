@@ -12,8 +12,29 @@ import { useCallback } from 'react'
 export const GamePlay: React.FC = () => {
   const { currentGame, playerAnswers, updateAnswer, submitAnswers, callStop, availableCategories } = useGame()
   const { user } = useAuth()
-  const [timeLeft, setTimeLeft] = useState(currentGame?.round_time_limit || 120)
+  const [timeLeft, setTimeLeft] = useState(120)
+  // ✅ Inicializar timeLeft correctamente cuando se carga el juego
+  useEffect(() => {
+    if (currentGame?.status === 'playing' && currentGame.round_time_remaining !== undefined) {
+      console.log('🎯 Inicializando timeLeft:', {
+        roundTimeRemaining: currentGame.round_time_remaining,
+        stopCountdown: currentGame.stop_countdown,
+        isStopActive: currentGame.stop_countdown > 0 && currentGame.round_time_remaining === currentGame.stop_countdown
+      });
+
+      // ✅ Usar la misma lógica que en el useEffect de actualización
+      const isStopActive = currentGame.stop_countdown > 0 &&
+                          currentGame.round_time_remaining === currentGame.stop_countdown;
+
+      const initialTime = isStopActive
+        ? currentGame.stop_countdown
+        : currentGame.round_time_remaining;
+
+      setTimeLeft(initialTime);
+    }
+  }, [currentGame?.id]) // Solo cuando cambia el ID del juego (nueva carga)
   const [hasSubmitted, setHasSubmitted] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Función para obtener el nombre de una categoría por su ID
   const getCategoryName = useCallback((categoryId: string): string => {
@@ -24,11 +45,26 @@ export const GamePlay: React.FC = () => {
   useEffect(() => {
     if (!currentGame || currentGame.status !== 'playing') return
 
+    // ✅ Solo detener el temporizador si STOP está REALMENTE activo
+    const isStopActive = currentGame.stop_countdown && currentGame.stop_countdown > 0 &&
+                        currentGame.round_time_remaining === currentGame.stop_countdown
+
+    if (isStopActive) {
+      console.log('⏸️ Temporizador principal detenido - STOP activo')
+      return // Salir si STOP está realmente activo
+    }
+
+    console.log('▶️ Temporizador principal ejecutándose:', {
+      roundTimeRemaining: currentGame.round_time_remaining,
+      stopCountdown: currentGame.stop_countdown,
+      isStopActive
+    })
+
     const timer = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) {
-          // Time's up - auto submit
-          if (!hasSubmitted) {
+          // Time's up - auto submit (only if not already submitted)
+          if (!hasSubmitted && !isSubmitting) {
             handleSubmitAnswers()
           }
           return 0
@@ -38,7 +74,69 @@ export const GamePlay: React.FC = () => {
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [currentGame, hasSubmitted])
+  }, [currentGame, currentGame?.round_time_remaining, hasSubmitted, isSubmitting])
+
+  // ✅ Temporizador específico para STOP countdown
+  useEffect(() => {
+    if (!currentGame || !currentGame.stop_countdown || currentGame.stop_countdown <= 0) {
+      return // No ejecutar si no hay STOP activo
+    }
+
+    // ✅ Solo ejecutar si efectivamente se ha activado el STOP
+    const isStopActive = currentGame.round_time_remaining === currentGame.stop_countdown
+    if (!isStopActive) {
+      return // No ejecutar si no está activado
+    }
+
+    const stopTimer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          // STOP time's up - auto submit (only if not already submitted)
+          if (!hasSubmitted && !isSubmitting) {
+            handleSubmitAnswers()
+          }
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(stopTimer)
+  }, [currentGame?.stop_countdown, currentGame?.round_time_remaining, hasSubmitted, isSubmitting])
+
+  // Actualizar tiempo restante cuando cambia el estado del juego
+  useEffect(() => {
+    if (currentGame?.round_time_remaining !== undefined) {
+      console.log('🔄 Actualizando timer:', {
+        roundTimeRemaining: currentGame.round_time_remaining,
+        stopCountdown: currentGame.stop_countdown,
+        isStopActive: currentGame.stop_countdown > 0 && currentGame.round_time_remaining === currentGame.stop_countdown
+      });
+
+      // ✅ Solo usar stop_countdown si efectivamente está activo
+      const isStopActive = currentGame.stop_countdown > 0 &&
+                          currentGame.round_time_remaining === currentGame.stop_countdown;
+
+      // ✅ Si STOP está activo, usar el countdown como timer
+      // ✅ Si no, usar el tiempo restante normal del juego
+      const newTimeLeft = isStopActive
+        ? currentGame.stop_countdown
+        : currentGame.round_time_remaining;
+
+      setTimeLeft(newTimeLeft);
+    }
+  }, [currentGame?.round_time_remaining, currentGame?.stop_countdown])
+
+  // ✅ Actualizar inmediatamente cuando cambie stop_countdown
+  useEffect(() => {
+    if (currentGame?.stop_countdown !== undefined && currentGame.stop_countdown > 0) {
+      // ✅ Solo actualizar si efectivamente se ha activado el STOP
+      const isStopActive = currentGame.round_time_remaining === currentGame.stop_countdown
+      if (isStopActive) {
+        setTimeLeft(currentGame.stop_countdown)
+      }
+    }
+  }, [currentGame?.stop_countdown, currentGame?.round_time_remaining])
 
   // Handle STOP countdown
   useEffect(() => {
@@ -52,29 +150,65 @@ export const GamePlay: React.FC = () => {
   }, [currentGame?.stop_countdown])
 
   const handleSubmitAnswers = async () => {
-    if (hasSubmitted) return
+    if (hasSubmitted || isSubmitting || !currentGame || !user) return
 
+    setIsSubmitting(true)
     try {
       await submitAnswers(playerAnswers)
       setHasSubmitted(true)
       toast.success('¡Respuestas enviadas!')
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error submitting answers:', error)
+      if (error.message?.includes('duplicate key') || error.message?.includes('Respuestas ya enviadas')) {
+        console.log('Respuestas ya enviadas')
+        setHasSubmitted(true)
+        toast.success('¡Respuestas enviadas!')
+      } else {
+        toast.error(error.message || 'Error al enviar respuestas')
+      }
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
   const handleCallStop = async () => {
     if (hasSubmitted) return
 
-    // Check if user has at least one answer
-    const hasAnswers = Object.values(playerAnswers).some(answer => answer.trim().length > 0)
-    if (!hasAnswers) {
-      toast.error('Debes tener al menos una respuesta para llamar STOP')
+    // Check if user has completed all categories
+    if (completedAnswers !== totalCategories) {
+      toast.error('Debes completar todas las categorías antes de terminar el juego')
+      return
+    }
+
+    // ✅ Verificar si ya hay un STOP activo
+    const isStopActive = currentGame?.stop_countdown && currentGame.stop_countdown > 0 &&
+                        currentGame.round_time_remaining === currentGame.stop_countdown
+
+    if (isStopActive) {
+      // ✅ Si ya hay STOP activo, solo enviar respuestas
+      console.log('STOP ya activo, enviando respuestas sin cambiar tiempo')
+      try {
+        await handleSubmitAnswers()
+        toast.success('¡Respuestas enviadas!')
+      } catch (error) {
+        console.error('Error submitting answers:', error)
+      }
+      return
+    }
+
+    // ✅ Validar que el tiempo restante > stop_countdown (no extender tiempo)
+    const timeRemaining = timeLeft
+    const stopCountdownValue = currentGame?.stop_countdown || 10
+
+    if (stopCountdownValue >= timeRemaining) {
+      toast.error(`No puedes llamar STOP. El countdown configurado (${stopCountdownValue}s) es mayor o igual al tiempo restante (${timeRemaining}s)`)
       return
     }
 
     try {
+      // First call STOP to notify other players
       await callStop()
+      // Then submit the answers
       await handleSubmitAnswers()
     } catch (error) {
       console.error('Error calling stop:', error)
@@ -245,27 +379,16 @@ export const GamePlay: React.FC = () => {
       </div>
 
       {/* Actions */}
-      <div className="flex flex-col sm:flex-row gap-4 justify-center">
-        <Button
-          onClick={handleSubmitAnswers}
-          disabled={hasSubmitted || completedAnswers === 0}
-          variant="secondary"
-          size="lg"
-          className="flex items-center gap-2"
-        >
-          <Send className="w-5 h-5" />
-          Enviar Respuestas ({completedAnswers})
-        </Button>
-
+      <div className="flex justify-center">
         <Button
           onClick={handleCallStop}
-          disabled={hasSubmitted || completedAnswers === 0}
+          disabled={hasSubmitted || completedAnswers !== totalCategories || isSubmitting}
           variant="danger"
           size="lg"
-          className="flex items-center gap-2"
+          className="flex items-center gap-3 text-lg px-8 py-4"
         >
-          <Zap className="w-5 h-5" />
-          ¡STOP!
+          <Zap className="w-6 h-6" />
+          {isSubmitting ? 'Enviando...' : `¡STOP! (${completedAnswers}/${totalCategories})`}
         </Button>
       </div>
 

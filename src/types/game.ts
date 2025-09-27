@@ -17,6 +17,8 @@ export interface GameState {
   is_starting?: boolean
   // Mantener current_round como opcional para compatibilidad
   current_round?: number
+  // Campo para tiempo restante de la ronda
+  round_time_remaining?: number
 }
 
 export interface PlayerProfile {

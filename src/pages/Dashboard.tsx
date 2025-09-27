@@ -9,12 +9,16 @@ import { useAuth } from '../contexts/AuthContext'
 import { useGame } from '../contexts/GameContext'
 import { useNavigate, Navigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
+import { useAutoReconnect } from '../hooks/useAutoReconnect'
 
 export const Dashboard: React.FC = () => {
   const { profile, loading: authLoading, user } = useAuth()
   const { createGame, gameLoading } = useGame()
   const navigate = useNavigate()
   const [showCreateModal, setShowCreateModal] = useState(false)
+
+  // Hook para reconectar automáticamente a juegos activos
+  useAutoReconnect()
 
   const handleCreateGame = async (categoryIds: string[], maxRounds: number) => {
     try {

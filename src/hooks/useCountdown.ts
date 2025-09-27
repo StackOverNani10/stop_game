@@ -26,8 +26,10 @@ export const useCountdown = ({ gameId, hostId, userId, onCountdownStart, onCount
             // Iniciar countdown local
             startLocalCountdown(countdownValue);
           } else {
-            // Si ya terminó, ejecutar callback de fin
-            onCountdownEnd?.();
+            // Si ya terminó, solo el anfitrión inicia el juego
+            if (userId === hostId) {
+              onCountdownEnd?.();
+            }
           }
         }
       })
@@ -43,7 +45,10 @@ export const useCountdown = ({ gameId, hostId, userId, onCountdownStart, onCount
 
     const updateCountdown = () => {
       if (countdown <= 0) {
-        onCountdownEnd?.();
+        // Solo el anfitrión inicia el juego cuando termina el countdown local
+        if (userId === hostId) {
+          onCountdownEnd?.();
+        }
         return;
       }
 

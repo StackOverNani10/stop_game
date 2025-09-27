@@ -7,13 +7,17 @@ import { Navigate, useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { toast } from 'react-hot-toast'
 import LoadingScreen from '../components/screen/LoadingScreen'
+import { useAutoReconnect } from '../hooks/useAutoReconnect'
 
 export const Game: React.FC = () => {
   const { gameCode } = useParams<{ gameCode: string }>()
-  const { currentGame, joinGame } = useGame()
+  const { currentGame, joinGame, checkActiveGame } = useGame()
   const navigate = useNavigate()
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Hook para reconectar automáticamente si hay un juego activo diferente
+  useAutoReconnect()
 
   useEffect(() => {
     const loadGame = async () => {
@@ -32,16 +36,25 @@ export const Game: React.FC = () => {
           return
         }
 
-        // Intentar cargar el juego directamente por el código
+        // Primero intentar reconectar a juego activo
+        const activeGame = await checkActiveGame()
+        if (activeGame && activeGame.code === gameCode.toUpperCase()) {
+          console.log('Reconnected to active game:', activeGame.id)
+          setIsLoading(false)
+          return
+        }
+
+        // Si no hay juego activo, intentar unirse como nuevo jugador
         const { data: game, error } = await supabase
           .from('games')
           .select('*')
           .eq('code', gameCode.toUpperCase())
+          .eq('status', 'waiting')
           .single()
 
         if (error || !game) {
-          setError('No se encontró la partida')
-          toast.error('No se encontró la partida')
+          setError('No se encontró la partida o ya inició')
+          toast.error('No se encontró la partida o ya inició')
           navigate('/dashboard')
           return
         }
