@@ -80,3 +80,8 @@ export async function select<T extends TableName>(
 
   return query as any; // Type assertion to bypass type checking
 }
+
+// Helper function for executing raw SQL queries (for table creation, migrations, etc.)
+export async function executeSql(sql: string) {
+  return supabase.rpc('execute_sql', { query: sql })
+}

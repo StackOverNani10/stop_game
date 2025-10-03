@@ -124,7 +124,7 @@ export interface Database {
           id: string
           game_id: string
           player_id: string
-          round: number
+          round_number: number
           category: string
           answer: string
           points: number
@@ -135,7 +135,7 @@ export interface Database {
           id?: string
           game_id: string
           player_id: string
-          round: number
+          round_number: number
           category: string
           answer: string
           points?: number
@@ -146,11 +146,35 @@ export interface Database {
           id?: string
           game_id?: string
           player_id?: string
-          round?: number
+          round_number?: number
           category?: string
           answer?: string
           points?: number
-          is_unique?: boolean
+        }
+      }
+      round_completions: {
+        Row: {
+          id: string
+          game_id: string
+          player_id: string
+          round_number: number
+          completed_at: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          game_id: string
+          player_id: string
+          round_number: number
+          completed_at?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          game_id?: string
+          player_id?: string
+          round_number?: number
+          completed_at?: string
           created_at?: string
         }
       }
@@ -165,3 +189,4 @@ export type Profile = Tables['profiles']['Row']
 export type Game = Tables['games']['Row']
 export type GamePlayer = Tables['game_players']['Row']
 export type RoundAnswer = Tables['round_answers']['Row']
+export type RoundCompletion = Tables['round_completions']['Row']

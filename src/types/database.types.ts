@@ -58,7 +58,7 @@ export interface Database {
           id: string
           game_id: string
           player_id: string
-          round_number: number  // Cambiado de 'round' a 'round_number'
+          round_number: number
           category: string
           answer: string
           points: number
@@ -69,7 +69,7 @@ export interface Database {
           id?: string
           game_id: string
           player_id: string
-          round_number: number  // Cambiado de 'round' a 'round_number'
+          round_number: number
           category: string
           answer: string
           points?: number
@@ -80,7 +80,7 @@ export interface Database {
           id?: never
           game_id?: string
           player_id?: string
-          round_number?: number  // Cambiado de 'round' a 'round_number'
+          round_number?: number
           category?: string
           answer?: string
           points?: number
@@ -92,16 +92,19 @@ export interface Database {
         Row: {
           id: string
           name: string
+          description: string
           created_at: string
         }
         Insert: {
           id?: string
           name: string
+          description: string
           created_at?: string
         }
         Update: {
           id?: never
           name?: string
+          description: string
           created_at?: string
         }
       }
@@ -129,6 +132,32 @@ export interface Database {
           joined_at?: string
           is_ready?: boolean
           score?: number
+        }
+      }
+      round_completions: {
+        Row: {
+          id: string
+          game_id: string
+          player_id: string
+          round_number: number
+          completed_at: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          game_id: string
+          player_id: string
+          round_number: number
+          completed_at: string
+          created_at?: string
+        }
+        Update: {
+          id?: never
+          game_id?: string
+          player_id?: string
+          round_number?: number
+          completed_at?: string
+          created_at?: string
         }
       }
       profiles: {

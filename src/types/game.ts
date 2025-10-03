@@ -1,9 +1,18 @@
+import { RoundCompletion } from './database'
+
+export interface PlayerProfile {
+  id: string
+  full_name: string | null
+  avatar_url: string | null
+  email: string
+}
+
 export interface GameState {
   id: string
   code: string
   host_id: string
-  status: 'waiting' | 'starting' | 'playing' | 'finished'
-  current_round_number: number  // Cambiado de current_round a current_round_number
+  status: 'waiting' | 'starting' | 'playing' | 'finished' | 'showing_results'
+  current_round_number: number
   current_letter: string | null
   categories: string[]
   max_rounds: number
@@ -12,19 +21,13 @@ export interface GameState {
   players: GamePlayerState[]
   created_at: string
   updated_at: string
-  // Campos para cuenta regresiva de inicio
   starting_countdown?: number
   is_starting?: boolean
-  // Mantener current_round como opcional para compatibilidad
   current_round?: number
-  // Campo para tiempo restante de la ronda
   round_time_remaining?: number
-}
-
-export interface PlayerProfile {
-  full_name: string | null
-  avatar_url: string | null
-  email: string
+  round_results?: string | RoundResults[]
+  players_finished?: number
+  player_name?: string
 }
 
 export interface GamePlayerState {
@@ -46,6 +49,7 @@ export interface PlayerAnswers {
 
 export interface RoundResults {
   player_id: string
+  player_name?: string
   answers: {
     [category: string]: {
       answer: string
@@ -54,6 +58,7 @@ export interface RoundResults {
     }
   }
   total_points: number
+  total?: number // Alias for total_points for compatibility
 }
 
 export interface Category {
@@ -73,3 +78,8 @@ export const DEFAULT_CATEGORIES: Category[] = [
 ]
 
 export const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
+
+// Type for round completion with joined profile data
+export interface RoundCompletionWithProfile extends RoundCompletion {
+  profile: PlayerProfile | null
+}

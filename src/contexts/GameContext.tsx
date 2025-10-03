@@ -3,7 +3,8 @@ import { v4 as uuidv4 } from 'uuid'
 import toast from 'react-hot-toast'
 import { supabase, insert } from '../lib/supabase'
 import { useAuth } from './AuthContext'
-import { GameState, PlayerAnswers, LETTERS, PlayerData } from '../types/game';
+import { GameState, PlayerAnswers, LETTERS, PlayerData, RoundCompletionWithProfile } from '../types/game';
+import { RoundCompletion } from '../types/database';
 import { useCountdown } from '../hooks/useCountdown';
 
 // Interfaz para el perfil del jugador
@@ -53,6 +54,8 @@ interface GameContextType {
   gameLoading: boolean
   availableCategories: DBCategory[]
   categoriesLoading: boolean
+  roundResults: RoundResults[]
+  roundCompletions: RoundCompletionWithProfile[]
   createGame: (categories: string[], maxRounds: number) => Promise<string>
   joinGame: (code: string) => Promise<string>
   leaveGame: () => Promise<void>
@@ -88,13 +91,55 @@ export interface DBCategory {
   created_at: string;
 }
 
+interface RoundAnswerData {
+  id: string;
+  game_id: string;
+  player_id: string;
+  round_number: number;
+  category: string;
+  answer: string;
+  points: number;
+  is_unique: boolean;
+  created_at: string;
+}
+
+interface AnswerWithMetadata {
+  id: string;
+  player_id: string;
+  answer: string;
+  points: number;
+  is_unique: boolean;
+}
+
+interface RoundResults {
+  player_id: string;
+  player_name?: string;
+  answers: {
+    [category: string]: {
+      answer: string;
+      points: number;
+      is_unique: boolean;
+    }
+  };
+  total_points: number;
+  completed_at?: string;
+}
+
+export interface ExistingRoundAnswer {
+  category: string;
+  answer: string;
+}
+
 export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, profile } = useAuth()
   const [currentGame, setCurrentGame] = useState<GameState | null>(null)
+  const [existingRoundAnswers, setExistingRoundAnswers] = useState<ExistingRoundAnswer[]>([])
   const [playerAnswers, setPlayerAnswers] = useState<PlayerAnswers>({})
   const [gameLoading, setGameLoading] = useState(false)
   const [availableCategories, setAvailableCategories] = useState<DBCategory[]>([])
   const [categoriesLoading, setCategoriesLoading] = useState(true)
+  const [roundResults, setRoundResults] = useState<RoundResults[]>([])
+  const [roundCompletions, setRoundCompletions] = useState<RoundCompletionWithProfile[]>([])
 
   // Cargar categorías disponibles
   const loadCategories = useCallback(async () => {
@@ -337,14 +382,36 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         },
         (payload) => {
           console.log('Cambio en respuestas:', payload);
-          // Aquí podrías actualizar el estado de las respuestas si es necesario
+          // Recalcular puntos cuando se detecte un cambio en respuestas
+          if (currentGame && payload.eventType === 'INSERT') {
+            const roundNumber = currentGame.current_round_number || currentGame.current_round || 1;
+            // Recalcular puntos para manejar duplicados correctamente
+            recalculatePointsForDuplicates(currentGame.id, roundNumber);
+          }
         }
       )
       .subscribe();
 
-    // Suscripción para eventos de countdown
-    const countdownChannel = supabase
-      .channel(`game_countdown_${currentGame.id}`)
+    // Suscripción a cambios en completaciones de rondas
+    const completionsSubscription = supabase
+      .channel(`game_completions_${currentGame.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'round_completions',
+          filter: `game_id=eq.${currentGame.id}`
+        },
+        (payload) => {
+          console.log('Cambio en completaciones de ronda:', payload);
+          // Actualizar resultados cuando se registra una nueva completación
+          if (currentGame && payload.eventType === 'INSERT') {
+            const roundNumber = currentGame.current_round_number || currentGame.current_round || 1;
+            loadRoundResults(currentGame.id, roundNumber);
+          }
+        }
+      )
       .on('broadcast', { event: 'countdown_start' }, (payload) => {
         console.log('Countdown started:', payload)
         // Solo iniciar cuenta regresiva si no es el anfitrión quien la inició
@@ -441,7 +508,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       supabase.removeChannel(playersSubscription)
       supabase.removeChannel(gameSubscription)
       supabase.removeChannel(answersSubscription)
-      supabase.removeChannel(countdownChannel)
+      supabase.removeChannel(completionsSubscription)
       supabase.removeChannel(playersChannel)
       supabase.removeChannel(roundTimerChannel)
     };
@@ -552,8 +619,180 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }
 
+  const loadRoundResults = async (gameId: string, roundNumber: number) => {
+    try {
+      // Cargar completaciones de jugadores para esta ronda
+      const { data: completionsData, error: completionsError } = await supabase
+        .from('round_completions')
+        .select(`
+          *,
+          profile:profiles(full_name, avatar_url, email)
+        `)
+        .eq('game_id', gameId)
+        .eq('round_number', roundNumber)
+        .order('completed_at', { ascending: true }) as { data: RoundCompletionWithProfile[] | null; error: any };
+
+      if (completionsError) {
+        console.error('Error loading round completions:', completionsError)
+        return
+      }
+
+      if (completionsData && completionsData.length > 0) {
+        // Cargar respuestas de jugadores que han terminado
+        const { data: answersData, error: answersError } = await supabase
+          .from('round_answers')
+          .select('*')
+          .eq('game_id', gameId)
+          .eq('round_number', roundNumber)
+          .in('player_id', completionsData.map(c => c.player_id)) as { data: RoundAnswerData[] | null; error: any };
+
+        if (answersError) {
+          console.error('Error loading round answers:', answersError)
+          return
+        }
+
+        // Crear mapa de respuestas por jugador
+        const answersByPlayer = new Map<string, any[]>()
+        ;(answersData || []).forEach(answer => {
+          if (!answersByPlayer.has(answer.player_id)) {
+            answersByPlayer.set(answer.player_id, [])
+          }
+          answersByPlayer.get(answer.player_id)!.push(answer)
+        })
+
+        // Crear resultados formateados
+        const results: RoundResults[] = completionsData.map(completion => {
+          const playerAnswers = answersByPlayer.get(completion.player_id) || []
+          const answersMap: { [category: string]: { answer: string; points: number; is_unique: boolean } } = {}
+          let totalPoints = 0
+
+          playerAnswers.forEach(answer => {
+            answersMap[answer.category] = {
+              answer: answer.answer,
+              points: answer.points || 0,
+              is_unique: answer.is_unique || false
+            }
+            totalPoints += answer.points || 0
+          })
+
+          return {
+            player_id: completion.player_id,
+            player_name: (completion as any).profile?.full_name || 'Jugador',
+            answers: answersMap,
+            total_points: totalPoints,
+            completed_at: completion.completed_at
+          }
+        })
+
+        setRoundResults(results)
+        setRoundCompletions(completionsData as RoundCompletionWithProfile[])
+      } else {
+        // Si no hay completaciones, limpiar resultados
+        setRoundResults([])
+        setRoundCompletions([])
+      }
+    } catch (error) {
+      console.error('Error loading round results:', error)
+    }
+  }
+
   const generateGameCode = (): string => {
     return Math.random().toString(36).substring(2, 8).toUpperCase()
+  }
+
+  // Función para calcular puntos proporcionalmente basado en respuestas duplicadas
+  const calculatePoints = (totalDuplicates: number): number => {
+    if (totalDuplicates <= 1) return 100 // Respuesta única = 100 puntos
+    return Math.floor(100 / totalDuplicates) // Dividir 100 puntos entre la cantidad de respuestas idénticas
+  }
+
+  // Función para recalcular puntos cuando se detectan duplicados posteriormente
+  const recalculatePointsForDuplicates = async (gameId: string, roundNumber: number) => {
+    try {
+      // Obtener todas las respuestas de esta ronda
+      const { data: allRoundAnswers, error } = await supabase
+        .from('round_answers')
+        .select('id, player_id, category, answer, points, is_unique')
+        .eq('game_id', gameId)
+        .eq('round_number', roundNumber) as { data: RoundAnswerData[] | null; error: any };
+
+      if (error || !allRoundAnswers) {
+        console.error('Error loading answers for recalculation:', error)
+        return
+      }
+
+      // Crear mapa para agrupar respuestas por categoría y respuesta (ignorando mayúsculas/minúsculas y espacios)
+      const answersByCategoryAndResponse = new Map<string, AnswerWithMetadata[]>()
+
+      allRoundAnswers.forEach((answer: RoundAnswerData) => {
+        const key = `${answer.category}:${answer.answer.toLowerCase().trim()}`
+        if (!answersByCategoryAndResponse.has(key)) {
+          answersByCategoryAndResponse.set(key, [])
+        }
+        answersByCategoryAndResponse.get(key)!.push({
+          id: answer.id,
+          player_id: answer.player_id,
+          answer: answer.answer,
+          points: answer.points,
+          is_unique: answer.is_unique
+        })
+      })
+
+      // Actualizar puntos para respuestas duplicadas
+      const updatePromises = []
+
+      for (const [key, answerList] of answersByCategoryAndResponse) {
+        if (answerList.length > 1) {
+          // Esta respuesta aparece múltiples veces, calcular puntos proporcionales
+          const correctPoints = calculatePoints(answerList.length)
+
+          // Actualizar cada respuesta duplicada con los puntos correctos
+          for (const answer of answerList) {
+            // Siempre actualizar si los puntos no son correctos O si is_unique no es false
+            if (answer.points !== correctPoints || answer.is_unique !== false) {
+              updatePromises.push(
+                (supabase as any)
+                  .from('round_answers')
+                  .update({
+                    points: correctPoints,
+                    is_unique: false,
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq('id', answer.id)
+              )
+            }
+          }
+
+          console.log(`Recalculated points for ${answerList.length} duplicate answers in ${key}: ${correctPoints} points each`)
+        } else {
+          // Respuesta única, asegurar que tenga 100 puntos y esté marcada como única
+          const uniqueAnswer = answerList[0]
+          if (uniqueAnswer.points !== 100 || uniqueAnswer.is_unique !== true) {
+            updatePromises.push(
+              (supabase as any)
+                .from('round_answers')
+                .update({
+                  points: 100,
+                  is_unique: true,
+                  updated_at: new Date().toISOString()
+                } as any)
+                .eq('id', uniqueAnswer.id)
+            )
+          }
+        }
+      }
+
+      // Ejecutar todas las actualizaciones
+      if (updatePromises.length > 0) {
+        await Promise.all(updatePromises)
+        console.log(`Updated points for ${updatePromises.length} answers`)
+
+        // Recargar resultados después de actualizar puntos
+        await loadRoundResults(gameId, roundNumber)
+      }
+    } catch (error) {
+      console.error('Error recalculating points:', error)
+    }
   }
 
   const checkActiveGame = async () => {
@@ -578,9 +817,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (activePlayer?.game) {
         const game = activePlayer.game;
 
-        // Solo reconectar si el juego está activo (waiting, starting, playing)
-        if (['waiting', 'starting', 'playing'].includes(game.status)) {
-          console.log('Found active game, reconnecting:', game.id);
+        // Reconectar si el juego está activo (waiting, starting, playing) o terminado (finished)
+        // Los juegos terminados necesitan ser visibles en la pantalla de resultados
+        if (['waiting', 'starting', 'playing', 'finished'].includes(game.status)) {
+          console.log('Found game, reconnecting:', game.id, 'Status:', game.status);
 
           // Cargar el juego completo
           await joinGameById(game.id);
@@ -678,6 +918,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             id: currentUser.id,
             player_id: currentUser.id,
             profile: {
+              id: currentUser.id,
               full_name: currentUser.user_metadata?.full_name || null,
               avatar_url: currentUser.user_metadata?.avatar_url || null,
               email: currentUser.email || ''
@@ -1165,13 +1406,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      // Verificar que no haya respuestas ya enviadas para esta ronda
+      const currentRoundNumber = currentGame.current_round_number || currentGame.current_round || 1;
+
+      // Verificar que no haya respuestas ya enviadas para esta ronda por este jugador
       const { data: existingAnswers } = await supabase
         .from('round_answers')
         .select('id')
         .eq('game_id', currentGame.id)
         .eq('player_id', user.id)
-        .eq('round_number', currentGame.current_round_number)
+        .eq('round_number', currentRoundNumber)
         .limit(1)
 
       if (existingAnswers && existingAnswers.length > 0) {
@@ -1185,24 +1428,137 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Crear el objeto de respuesta con los nombres de columna correctos
-      const roundAnswers = Object.entries(answers).map(([category, answer]) => ({
-        game_id: currentGame.id,
-        player_id: user.id,
-        round_number: currentGame.current_round_number,
-        category: category,
-        answer: answer.trim(),
-        points: 0,
-        is_unique: false,
-        created_at: new Date().toISOString()
-      }));
+      // Obtener respuestas existentes para esta ronda para calcular is_unique correctamente
+      const { data: existingRoundAnswers } = await supabase
+        .from('round_answers')
+        .select('category, answer')
+        .eq('game_id', currentGame.id)
+        .eq('round_number', currentRoundNumber) as { data: ExistingRoundAnswer[] | null; error: any };
 
-      // Intentar insertar las respuestas usando la función insert del helper
+      // Crear mapa de respuestas existentes por categoría para verificar unicidad
+      const existingAnswersByCategory = new Map<string, Set<string>>();
+      (existingRoundAnswers || []).forEach(answer => {
+        if (!existingAnswersByCategory.has(answer.category)) {
+          existingAnswersByCategory.set(answer.category, new Set());
+        }
+        existingAnswersByCategory.get(answer.category)!.add(answer.answer.toLowerCase().trim());
+      });
+
+      // Crear el objeto de respuesta con los nombres de columna correctos y calcular puntos proporcionalmente
+      const roundAnswers = Object.entries(answers).map(([category, answer]) => {
+        const trimmedAnswer = answer.trim().toLowerCase();
+        const categoryAnswers = existingAnswersByCategory.get(category) || new Set();
+
+        // Contar respuestas existentes idénticas (incluyendo la nueva)
+        let totalDuplicates = 1; // Contamos nuestra propia respuesta
+
+        // Buscar respuestas existentes idénticas en esta categoría
+        for (const existingAnswer of categoryAnswers) {
+          if (existingAnswer === trimmedAnswer) {
+            totalDuplicates++;
+          }
+        }
+
+        const isUnique = totalDuplicates === 1;
+        const correctPoints = calculatePoints(totalDuplicates);
+
+        return {
+          game_id: currentGame.id,
+          player_id: user.id,
+          round_number: currentRoundNumber,
+          category: category,
+          answer: answer.trim(),
+          points: correctPoints,
+          is_unique: isUnique,
+          created_at: new Date().toISOString()
+        };
+      });
+
+      // Insertar las respuestas usando la función insert del helper
       const { data, error } = await insert('round_answers', roundAnswers);
 
       if (error) {
         console.error('Database error details:', error);
         throw new Error(`Database error: ${error.message}`);
+      }
+
+      // Después de insertar, verificar respuestas no únicas y actualizar todas las respuestas duplicadas
+      if (data && Array.isArray(data) && (data as any[]).length > 0) {
+        // Obtener todas las respuestas de esta ronda incluyendo las recién insertadas
+        const { data: allRoundAnswers } = await supabase
+          .from('round_answers')
+          .select('id, category, answer, is_unique, points')
+          .eq('game_id', currentGame.id)
+          .eq('round_number', currentRoundNumber) as { data: Array<{id: string, category: string, answer: string, is_unique: boolean, points: number}> | null; error: any };
+
+        if (allRoundAnswers) {
+          // Crear mapa para agrupar respuestas por categoría y respuesta
+          const answersByCategoryAndResponse = new Map<string, Array<{id: string, is_unique: boolean, points: number}>>();
+
+          allRoundAnswers.forEach(answer => {
+            const key = `${answer.category}:${answer.answer.toLowerCase().trim()}`;
+            if (!answersByCategoryAndResponse.has(key)) {
+              answersByCategoryAndResponse.set(key, []);
+            }
+            answersByCategoryAndResponse.get(key)!.push({
+              id: answer.id,
+              is_unique: answer.is_unique,
+              points: answer.points
+            });
+          });
+
+          // Actualizar respuestas que tienen duplicados con puntos proporcionales
+          for (const [key, answerList] of answersByCategoryAndResponse) {
+            if (answerList.length > 1) {
+              // Esta respuesta aparece múltiples veces, calcular puntos proporcionales
+              const correctPoints = calculatePoints(answerList.length);
+
+              // Actualizar cada respuesta duplicada con los puntos correctos
+              const updatePromises = answerList.map(answer =>
+                (supabase as any)
+                  .from('round_answers')
+                  .update({
+                    points: correctPoints,
+                    is_unique: false,
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq('id', answer.id)
+              );
+
+              await Promise.all(updatePromises);
+              console.log(`Updated ${answerList.length} duplicate answers for ${key} to ${correctPoints} points each`);
+            }
+          }
+        }
+      }
+
+      // Marcar al jugador como terminado en esta ronda (tanto para STOP manual como automático)
+      // Verificar si el jugador ya está marcado como completado para evitar duplicados
+      const { data: existingCompletion } = await supabase
+        .from('round_completions')
+        .select('id')
+        .eq('game_id', currentGame.id)
+        .eq('player_id', user.id)
+        .eq('round_number', currentRoundNumber)
+        .limit(1)
+
+      if (!existingCompletion || existingCompletion.length === 0) {
+        try {
+          await insert('round_completions', {
+            game_id: currentGame.id,
+            player_id: user.id,
+            round_number: currentRoundNumber,
+            completed_at: new Date().toISOString(),
+            created_at: new Date().toISOString()
+          })
+          console.log('Jugador marcado como terminado en round_completions')
+
+          // Cargar resultados inmediatamente después de marcar como completado
+          await loadRoundResults(currentGame.id, currentRoundNumber)
+        } catch (completionError) {
+          console.error('Error marking player as completed:', completionError)
+          // No fallar si no se puede marcar como completado, continuar con el proceso normal
+        }
       }
 
       toast.success('Respuestas enviadas');
@@ -1220,25 +1576,44 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const stopCountdownValue = currentGame.stop_countdown || 10 // Valor configurado
       const currentTimeRemaining = currentGame.round_time_remaining || stopCountdownValue
 
-      // ✅ Verificar si ya hay un STOP activo
+      // Verificar si ya hay un STOP activo
       const isStopActive = currentGame.stop_countdown > 0 &&
                           currentGame.round_time_remaining === currentGame.stop_countdown
 
       if (isStopActive) {
-        // ✅ Si ya hay STOP activo, solo enviar respuestas (no cambiar tiempo)
+        // Si ya hay STOP activo, solo enviar respuestas (no cambiar tiempo)
         console.log('STOP ya activo, enviando respuestas sin cambiar tiempo')
         toast.success('¡Enviando respuestas!')
         return // Salir sin cambiar el tiempo
       }
 
-      // ✅ Validar: Solo permitir STOP si stop_countdown < tiempo restante actual
+      // Validar: Solo permitir STOP si stop_countdown < tiempo restante actual
       if (stopCountdownValue >= currentTimeRemaining) {
         toast.error(`No puedes llamar STOP. El countdown configurado (${stopCountdownValue}s) es mayor o igual al tiempo restante (${currentTimeRemaining}s)`)
         return
       }
 
-      // ✅ Usar stop_countdown como nuevo tiempo restante
+      // Usar stop_countdown como nuevo tiempo restante
       const newTimeRemaining = stopCountdownValue
+
+      // Marcar al usuario como terminado en esta ronda
+      try {
+        await insert('round_completions', {
+          game_id: currentGame.id,
+          player_id: user.id,
+          round_number: currentGame.current_round_number ?? currentGame.current_round,
+          completed_at: new Date().toISOString(),
+          created_at: new Date().toISOString()
+        })
+        console.log('Jugador marcado como terminado en round_completions')
+
+        // Cargar resultados inmediatamente después de marcar como completado
+        const roundNumber = currentGame.current_round_number ?? currentGame.current_round ?? 1
+        await loadRoundResults(currentGame.id, roundNumber)
+      } catch (completionError) {
+        console.error('Error marking player as completed:', completionError)
+        // No fallar si no se puede marcar como completado, continuar con el proceso normal
+      }
 
       // Update local state to show stop countdown
       setCurrentGame(prev => prev ? {
@@ -1286,6 +1661,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toast.error('Error al llamar STOP')
     }
   }
+
   const updateGamePlayer = async (gameId: string, playerId: string, isReady: boolean) => {
     // Use the HTTP API directly as a workaround for type issues
     const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/game_players?game_id=eq.${gameId}&player_id=eq.${playerId}`, {
@@ -1351,6 +1727,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     gameLoading,
     availableCategories,
     categoriesLoading,
+    roundResults,
+    roundCompletions,
     createGame,
     joinGame,
     leaveGame,

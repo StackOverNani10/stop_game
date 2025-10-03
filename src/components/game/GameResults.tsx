@@ -23,6 +23,7 @@ interface PlayerResult {
   answers: { [category: string]: { answer: string; points: number; is_unique: boolean } }
   total_points: number
   round_points: number
+  is_completed?: boolean
 }
 
 export const GameResults: React.FC = () => {
@@ -32,17 +33,62 @@ export const GameResults: React.FC = () => {
   const [results, setResults] = useState<PlayerResult[]>([])
   const [loading, setLoading] = useState(true)
 
+  const [completedPlayers, setCompletedPlayers] = useState<Set<string>>(new Set())
+
   useEffect(() => {
     if (currentGame) {
       loadResults()
+      loadCompletedPlayers()
+
+      // Suscripción en tiempo real para cambios en round_completions
+      const completionsSubscription = supabase
+        .channel(`round_completions_${currentGame.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'round_completions',
+            filter: `game_id=eq.${currentGame.id}`
+          },
+          (payload) => {
+            console.log('Cambio en round_completions:', payload)
+            // Recargar jugadores completados cuando haya cambios
+            loadCompletedPlayers()
+          }
+        )
+        .subscribe()
+
+      return () => {
+        supabase.removeChannel(completionsSubscription)
+      }
     }
   }, [currentGame])
+
+  const loadCompletedPlayers = async () => {
+    if (!currentGame) return
+
+    try {
+      const { data: completions, error } = await supabase
+        .from('round_completions')
+        .select('player_id, round_number')
+        .eq('game_id', currentGame.id)
+        .eq('round_number', currentGame.current_round || 1)
+
+      if (error) throw error
+
+      const completedSet = new Set(completions?.map((c: { player_id: string }) => c.player_id) || [])
+      setCompletedPlayers(completedSet)
+    } catch (error) {
+      console.error('Error loading completed players:', error)
+    }
+  }
 
   const loadResults = async () => {
     if (!currentGame) return
 
     try {
-      // Get all answers for the current round
+      // Get all answers for the current round with player info
       const { data: answers, error } = await supabase
         .from('round_answers')
         .select(`
@@ -50,9 +96,18 @@ export const GameResults: React.FC = () => {
           profile:profiles(full_name, email)
         `)
         .eq('game_id', currentGame.id)
-        .eq('round', currentGame.current_round)
+        .eq('round_number', currentGame.current_round_number || currentGame.current_round || 1)
 
       if (error) throw error
+
+      // Get completed players for this round
+      const { data: completions } = await supabase
+        .from('round_completions')
+        .select('player_id, round_number')
+        .eq('game_id', currentGame.id)
+        .eq('round_number', currentGame.current_round_number || currentGame.current_round || 1)
+
+      const completedSet = new Set(completions?.map((c: { player_id: string }) => c.player_id) || [])
 
       // Process results
       const playerResults: { [playerId: string]: PlayerResult } = {}
@@ -72,12 +127,13 @@ export const GameResults: React.FC = () => {
           player_name: player.profile?.full_name || 'Usuario',
           answers: {},
           total_points: player.score || 0,
-          round_points: 0
+          round_points: 0,
+          is_completed: completedSet.has(playerId)
         };
       });
 
       // Process answers
-      (answers as Answer[])?.forEach((answer: Answer) => {
+      (answers as any[])?.forEach((answer: any) => {
         if (playerResults[answer.player_id]) {
           playerResults[answer.player_id].answers[answer.category] = {
             answer: answer.answer,
@@ -227,7 +283,7 @@ export const GameResults: React.FC = () => {
 
                 {/* Answers */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {currentGame.categories.map(category => {
+                  {currentGame.categories.map((category: string) => {
                     const answer = result.answers[category]
                     return (
                       <div key={category} className="bg-white p-3 rounded-lg border">
