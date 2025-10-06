@@ -292,6 +292,11 @@ export const GamePlay: React.FC = () => {
           loadRoundResultsRealTime()
         }
       )
+      .on('broadcast', { event: 'round_completion' }, (payload) => {
+        console.log('🔄 Nueva completación de ronda recibida:', payload)
+        // Recargar resultados cuando alguien termina
+        loadRoundResultsRealTime()
+      })
       .subscribe()
 
     // Suscripción a cambios en respuestas de rondas

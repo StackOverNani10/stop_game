@@ -1264,27 +1264,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }
 
-  // Función para notificar a otros jugadores que un usuario se va
-  const notifyPlayerLeft = async () => {
-    if (!currentGame || !user) return
-
-    try {
-      const channel = supabase.channel(`game_players_${currentGame.id}`)
-      await channel.send({
-        type: 'broadcast',
-        event: 'player_left',
-        payload: {
-          game_id: currentGame.id,
-          player_id: user.id,
-          timestamp: Date.now()
-        }
-      })
-    } catch (error) {
-      console.error('Error al notificar salida de usuario:', error)
-    }
-  }
-
-  // Función para notificar cambios en la configuración del juego
+  // Función para notificar a otros jugadores sobre la actualización de configuración del juego
   const notifyGameSettingsUpdate = async (settings: {
     max_rounds: number;
     round_time_limit: number;
@@ -1305,6 +1285,48 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       })
     } catch (error) {
       console.error('Error al notificar actualización de configuración:', error)
+    }
+  }
+
+  // Función para notificar a otros jugadores que un usuario se va
+  const notifyPlayerLeft = async () => {
+    if (!currentGame || !user) return
+
+    try {
+      const channel = supabase.channel(`game_players_${currentGame.id}`)
+      await channel.send({
+        type: 'broadcast',
+        event: 'player_left',
+        payload: {
+          game_id: currentGame.id,
+          player_id: user.id,
+          timestamp: Date.now()
+        }
+      })
+    } catch (error) {
+      console.error('Error al notificar salida de usuario:', error)
+    }
+  }
+
+  // Función para notificar completaciones de rondas a otros jugadores
+  const notifyRoundCompletion = async (gameId: string, playerId: string, roundNumber: number) => {
+    if (!currentGame) return
+
+    try {
+      const channel = supabase.channel(`game_completions_${gameId}`)
+      await channel.send({
+        type: 'broadcast',
+        event: 'round_completion',
+        payload: {
+          game_id: gameId,
+          player_id: playerId,
+          round_number: roundNumber,
+          completed_at: new Date().toISOString(),
+          timestamp: Date.now()
+        }
+      })
+    } catch (error) {
+      console.error('Error al notificar completación de ronda:', error)
     }
   }
   // Función que realmente inicia el juego después de la cuenta regresiva
@@ -1555,6 +1577,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           // Cargar resultados inmediatamente después de marcar como completado
           await loadRoundResults(currentGame.id, currentRoundNumber)
+
+          // ✅ Notificar a otros jugadores sobre la completación de ronda
+          await notifyRoundCompletion(currentGame.id, user.id, currentRoundNumber)
         } catch (completionError) {
           console.error('Error marking player as completed:', completionError)
           // No fallar si no se puede marcar como completado, continuar con el proceso normal
@@ -1610,6 +1635,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Cargar resultados inmediatamente después de marcar como completado
         const roundNumber = currentGame.current_round_number ?? currentGame.current_round ?? 1
         await loadRoundResults(currentGame.id, roundNumber)
+
+        // ✅ Notificar a otros jugadores sobre la completación de ronda
+        await notifyRoundCompletion(currentGame.id, user.id, roundNumber)
       } catch (completionError) {
         console.error('Error marking player as completed:', completionError)
         // No fallar si no se puede marcar como completado, continuar con el proceso normal
